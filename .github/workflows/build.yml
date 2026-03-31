@@ -49,13 +49,41 @@ jobs:
       - name: Detect kernel headers
         id: kernel
         run: |
-          KDIR=$(ls -d /lib/modules/*/build 2>/dev/null | sort -V | tail -1)
+          KDIR=$(ls -d /lib/modules/*/build 2>/dev/null | sort -V | tail -1 || true)
+
+          # In CI containers, header packages are often installed only under /usr/src.
+          if [ -z "$KDIR" ]; then
+            KDIR=$(find /usr/src -maxdepth 1 -type d -name 'linux-headers-*' \
+              ! -name '*-common' ! -name '*-common-*' \
+              | sort -V | tail -1 || true)
+          fi
+
           if [ -z "$KDIR" ]; then
             echo "::error::No kernel headers found"
+            echo "::group::Header detection diagnostics"
+            echo "/lib/modules:"
+            ls -la /lib/modules || true
+            echo "/usr/src:"
+            ls -la /usr/src || true
+            echo "Installed headers packages:"
+            dpkg -l 'linux-headers*' || true
+            echo "::endgroup::"
             exit 1
           fi
+
+          if [ ! -f "$KDIR/Makefile" ]; then
+            echo "::error::Kernel headers directory '$KDIR' is missing Makefile"
+            exit 1
+          fi
+
+          if [ "$(basename "$KDIR")" = "build" ]; then
+            KVER=$(basename "$(dirname "$KDIR")")
+          else
+            KVER=$(basename "$KDIR" | sed 's/^linux-headers-//')
+          fi
+
           echo "kdir=$KDIR" >> "$GITHUB_OUTPUT"
-          echo "kver=$(basename "$(dirname "$KDIR")")" >> "$GITHUB_OUTPUT"
+          echo "kver=$KVER" >> "$GITHUB_OUTPUT"
 
       - name: Build modules
         run: make KERNEL_SRC="${{ steps.kernel.outputs.kdir }}"
