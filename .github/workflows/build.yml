@@ -36,15 +36,15 @@ jobs:
             headers_pkg: linux-headers-amd64
 
     steps:
+      - uses: actions/checkout@v4
+
       - name: Install dependencies
         run: |
           export DEBIAN_FRONTEND=noninteractive
           apt-get update
           apt-get install -y --no-install-recommends \
-            build-essential clang kmod dkms git \
+            build-essential clang kmod \
             ${{ matrix.headers_pkg }}
-
-      - uses: actions/checkout@v4
 
       - name: Detect kernel headers
         id: kernel
