@@ -1,0 +1,81 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: redroid-modules
+  labels:
+    app: redroid-modules
+spec:
+  selector:
+    matchLabels:
+      app: redroid-modules
+  updateStrategy:
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        app: redroid-modules
+    spec:
+      hostPID: true
+      hostNetwork: true
+      nodeSelector:
+        kubernetes.io/os: linux
+      tolerations:
+        - operator: Exists
+      initContainers:
+        - name: install-modules
+          image: YOUR_NODE_OS
+          securityContext:
+            privileged: true
+          command:
+            - /bin/bash
+            - -c
+            - |
+              set -e
+              echo "Installing redroid kernel modules..."
+
+              # Check if modules are already loaded
+              if lsmod | grep -q '^binder_linux ' && lsmod | grep -q '^ashmem_linux '; then
+                echo "Modules already loaded, skipping."
+                exit 0
+              fi
+
+              # Install build dependencies
+              if command -v apt-get >/dev/null 2>&1; then
+                apt-get update -qq && apt-get install -y -qq build-essential linux-headers-$(uname -r) git
+              elif command -v yum >/dev/null 2>&1; then
+                yum install -y kernel-devel-$(uname -r) gcc make git
+              fi
+
+              # Clone and build
+              cd /tmp
+              if [ ! -d redroid-modules ]; then
+                git clone --depth 1 https://github.com/remote-android/redroid-modules.git
+              fi
+              cd redroid-modules
+              make clean && make
+              make install
+              make load
+
+              echo "Modules installed and loaded."
+          volumeMounts:
+            - name: lib-modules
+              mountPath: /lib/modules
+            - name: usr-src
+              mountPath: /usr/src
+      containers:
+        - name: pause
+          image: registry.k8s.io/pause:3.9
+          resources:
+            limits:
+              cpu: 10m
+              memory: 16Mi
+            requests:
+              cpu: 10m
+              memory: 16Mi
+      volumes:
+        - name: lib-modules
+          hostPath:
+            path: /lib/modules
+        - name: usr-src
+          hostPath:
+            path: /usr/src

@@ -1,0 +1,10 @@
+{
+    "_comment": "Known kernel versions that have been tested. Update after confirming a build.",
+    "tested": [
+        "6.17.13-2-pve"
+    ],
+    "known_packages": [
+        "linux-headers-6.8.0-50-generic",
+        "linux-headers-6.1.0-28-amd64"
+    ]
+}

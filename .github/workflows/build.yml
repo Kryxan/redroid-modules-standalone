@@ -1,0 +1,84 @@
+name: Build DKMS Modules
+
+on:
+  push:
+    branches: [main, master]
+    paths-ignore: ["**/*.md", "docs/**"]
+  pull_request:
+    branches: [main, master]
+    paths-ignore: ["**/*.md", "docs/**"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: "${{ matrix.name }}"
+    runs-on: ubuntu-latest
+    container:
+      image: "${{ matrix.image }}"
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: ubuntu-24.04
+            image: ubuntu:24.04
+            headers_pkg: linux-headers-generic
+          - name: ubuntu-22.04
+            image: ubuntu:22.04
+            headers_pkg: linux-headers-generic
+          - name: debian-13
+            image: debian:trixie
+            headers_pkg: linux-headers-amd64
+          - name: debian-12
+            image: debian:12
+            headers_pkg: linux-headers-amd64
+
+    steps:
+      - name: Install dependencies
+        run: |
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            build-essential clang kmod dkms git \
+            ${{ matrix.headers_pkg }}
+
+      - uses: actions/checkout@v4
+
+      - name: Detect kernel headers
+        id: kernel
+        run: |
+          KDIR=$(ls -d /lib/modules/*/build 2>/dev/null | sort -V | tail -1)
+          if [ -z "$KDIR" ]; then
+            echo "::error::No kernel headers found"
+            exit 1
+          fi
+          echo "kdir=$KDIR" >> "$GITHUB_OUTPUT"
+          echo "kver=$(basename "$(dirname "$KDIR")")" >> "$GITHUB_OUTPUT"
+
+      - name: Build modules
+        run: make KERNEL_SRC="${{ steps.kernel.outputs.kdir }}"
+
+      - name: Verify module metadata
+        run: |
+          modinfo ashmem/ashmem_linux.ko
+          modinfo binder/binder_linux.ko
+
+      - name: Build userspace tests
+        run: make -C test all
+
+      - name: Run compatibility checks
+        run: make ci-check
+
+      - name: Upload build outputs
+        uses: actions/upload-artifact@v4
+        with:
+          name: modules-${{ matrix.name }}-${{ steps.kernel.outputs.kver }}
+          path: |
+            ashmem/ashmem_linux.ko
+            binder/binder_linux.ko
+            test/ashmem_test
+            test/binder_test
+            test/test_ipc
+          if-no-files-found: error

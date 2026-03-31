@@ -1,0 +1,87 @@
+name: Package Artifacts
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version override (ex: 2.1.0)"
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    name: package-${{ matrix.distro }}
+    runs-on: ubuntu-latest
+    container:
+      image: ${{ matrix.image }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - distro: ubuntu-24.04
+            image: ubuntu:24.04
+            headers_pkg: linux-headers-generic
+          - distro: debian-13
+            image: debian:trixie
+            headers_pkg: linux-headers-amd64
+
+    steps:
+      - name: Install packaging tools
+        run: |
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            build-essential kmod dkms git fakeroot dpkg-dev debhelper \
+            tar xz-utils ${{ matrix.headers_pkg }}
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve version
+        id: ver
+        run: |
+          if [ -n "${{ inputs.version }}" ]; then
+            VER="${{ inputs.version }}"
+          elif echo "$GITHUB_REF_NAME" | grep -qE '^v[0-9]'; then
+            VER="${GITHUB_REF_NAME#v}"
+          else
+            VER="$(git describe --tags --always 2>/dev/null || echo 0.0.0-dev)"
+            VER="${VER#v}"
+          fi
+          echo "version=$VER" >> "$GITHUB_OUTPUT"
+
+      - name: Build modules
+        run: make
+
+      - name: Build DKMS deb packages
+        run: .github/scripts/dkms-package.sh "${{ steps.ver.outputs.version }}"
+
+      - name: Build source release bundle
+        run: |
+          mkdir -p dist
+          tar -czf "dist/redroid-modules-standalone-${{ steps.ver.outputs.version }}-${{ matrix.distro }}.tar.gz" \
+            --exclude .git --exclude dist .
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: package-${{ matrix.distro }}-${{ steps.ver.outputs.version }}
+          path: |
+            dist/*.deb
+            dist/*.tar.gz
+          if-no-files-found: error
+
+      - name: Publish release assets
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.deb
+            dist/*.tar.gz
+          fail_on_unmatched_files: false

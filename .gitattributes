@@ -1,0 +1,17 @@
+# Force LF line endings for shell scripts (critical for CI and Linux execution).
+*.sh text eol=lf
+.github/scripts/* text eol=lf
+
+# Kernel source files
+*.c text eol=lf
+*.h text eol=lf
+Makefile text eol=lf
+Kconfig text eol=lf
+dkms.conf text eol=lf
+
+# YAML workflows
+*.yml text eol=lf
+*.yaml text eol=lf
+
+# JSON
+*.json text eol=lf
