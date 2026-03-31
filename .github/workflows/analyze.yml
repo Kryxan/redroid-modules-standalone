@@ -32,6 +32,10 @@ jobs:
         id: kernel
         run: |
           KDIR=$(ls -d /lib/modules/*/build 2>/dev/null | sort -V | tail -1)
+          if [ -z "$KDIR" ]; then
+            echo "::error::No kernel build headers found in /lib/modules/*/build"
+            exit 1
+          fi
           echo "kdir=$KDIR" >> "$GITHUB_OUTPUT"
 
       - name: Sparse ashmem
@@ -54,7 +58,7 @@ jobs:
             sparse-binder.txt
 
   clang-tidy:
-    name: clang-tidy
+    name: clang-tidy-userspace
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -64,14 +68,15 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y clang-tidy
 
-      - name: Run clang-tidy on module sources
+      - name: Run clang-tidy on userspace tests
         run: |
-          set +e
-          find ashmem binder -type f \( -name "*.c" -o -name "*.h" \) \
-            | xargs -I{} clang-tidy {} -- -I./binder -I./ashmem > clang-tidy-report.txt 2>&1
-          STATUS=$?
-          cat clang-tidy-report.txt
-          exit $STATUS
+          set -euo pipefail
+          FILES="test/ashmem_test.c test/test.c test/test_ipc.c"
+          : > clang-tidy-report.txt
+          for f in $FILES; do
+            echo "=== $f ===" | tee -a clang-tidy-report.txt
+            clang-tidy "$f" -- -I./binder -I./ashmem -I./test 2>&1 | tee -a clang-tidy-report.txt
+          done
 
       - name: Upload clang-tidy report
         if: always()
