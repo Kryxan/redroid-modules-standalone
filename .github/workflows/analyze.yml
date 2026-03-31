@@ -1,108 +1,122 @@
 name: Static Analysis
 
 on:
-  push:
-    branches: [main, master]
-    paths: ["**/*.c", "**/*.h", "**/Makefile", "**/Kconfig", ".github/workflows/analyze.yml"]
-  pull_request:
-    branches: [main, master]
-    paths: ["**/*.c", "**/*.h", "**/Makefile", "**/Kconfig", ".github/workflows/analyze.yml"]
-  workflow_dispatch:
+    push:
+        branches: [main, master]
+        paths:
+            [
+                "**/*.c",
+                "**/*.h",
+                "**/Makefile",
+                "**/Kconfig",
+                ".github/workflows/analyze.yml",
+            ]
+    pull_request:
+        branches: [main, master]
+        paths:
+            [
+                "**/*.c",
+                "**/*.h",
+                "**/Makefile",
+                "**/Kconfig",
+                ".github/workflows/analyze.yml",
+            ]
+    workflow_dispatch:
 
 permissions:
-  contents: read
+    contents: read
 
 jobs:
-  sparse:
-    name: sparse
-    runs-on: ubuntu-latest
-    container:
-      image: ubuntu:24.04
-    steps:
-      - name: Install dependencies
-        run: |
-          export DEBIAN_FRONTEND=noninteractive
-          apt-get update
-          apt-get install -y --no-install-recommends \
-            build-essential sparse kmod linux-headers-generic
+    sparse:
+        name: sparse
+        runs-on: ubuntu-latest
+        container:
+            image: ubuntu:24.04
+        steps:
+            - name: Install dependencies
+              run: |
+                  export DEBIAN_FRONTEND=noninteractive
+                  apt-get update
+                  apt-get install -y --no-install-recommends \
+                    build-essential sparse kmod linux-headers-generic
 
-      - uses: actions/checkout@v4
+            - uses: actions/checkout@v4
 
-      - name: Detect headers
-        id: kernel
-        run: |
-          KDIR=$(ls -d /lib/modules/*/build 2>/dev/null | sort -V | tail -1)
-          if [ -z "$KDIR" ]; then
-            echo "::error::No kernel build headers found in /lib/modules/*/build"
-            exit 1
-          fi
-          echo "kdir=$KDIR" >> "$GITHUB_OUTPUT"
+            - name: Detect headers
+              id: kernel
+              run: |
+                  KDIR=$(ls -d /lib/modules/*/build 2>/dev/null | sort -V | tail -1)
+                  if [ -z "$KDIR" ]; then
+                    echo "::error::No kernel build headers found in /lib/modules/*/build"
+                    exit 1
+                  fi
+                  echo "kdir=$KDIR" >> "$GITHUB_OUTPUT"
 
-      - name: Sparse ashmem
-        run: |
-          make -C "${{ steps.kernel.outputs.kdir }}" M="$PWD/ashmem" C=1 CF="-D__CHECK_ENDIAN__" modules \
-            2>&1 | tee sparse-ashmem.txt
+            - name: Sparse ashmem
+              run: |
+                  make -C "${{ steps.kernel.outputs.kdir }}" M="$PWD/ashmem" C=1 CF="-D__CHECK_ENDIAN__" modules \
+                    2>&1 | tee sparse-ashmem.txt
 
-      - name: Sparse binder
-        run: |
-          make -C "${{ steps.kernel.outputs.kdir }}" M="$PWD/binder" C=1 CF="-D__CHECK_ENDIAN__" modules \
-            2>&1 | tee sparse-binder.txt
+            - name: Sparse binder
+              run: |
+                  make -C "${{ steps.kernel.outputs.kdir }}" M="$PWD/binder" C=1 CF="-D__CHECK_ENDIAN__" modules \
+                    2>&1 | tee sparse-binder.txt
 
-      - name: Upload sparse reports
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: sparse-reports
-          path: |
-            sparse-ashmem.txt
-            sparse-binder.txt
+            - name: Upload sparse reports
+              if: always()
+              uses: actions/upload-artifact@v4
+              with:
+                  name: sparse-reports
+                  path: |
+                      sparse-ashmem.txt
+                      sparse-binder.txt
 
-  clang-tidy:
-    name: clang-tidy-userspace
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
+    clang-tidy:
+        name: clang-tidy-userspace
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v4
 
-      - name: Install clang-tidy
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y clang-tidy
+            - name: Install clang-tidy
+              run: |
+                  sudo apt-get update
+                  sudo apt-get install -y clang-tidy
 
-      - name: Run clang-tidy on userspace tests
-        run: |
-          set -euo pipefail
-          FILES="test/ashmem_test.c test/test.c test/test_ipc.c"
-          : > clang-tidy-report.txt
-          for f in $FILES; do
-            echo "=== $f ===" | tee -a clang-tidy-report.txt
-            clang-tidy "$f" -- -I./binder -I./ashmem -I./test 2>&1 | tee -a clang-tidy-report.txt
-          done
+            - name: Run clang-tidy on userspace tests
+              run: |
+                  set -euo pipefail
+                  FILES="test/ashmem_test.c test/test.c test/test_ipc.c"
+                  : > clang-tidy-report.txt
+                  for f in $FILES; do
+                    echo "=== $f ===" | tee -a clang-tidy-report.txt
+                    clang-tidy "$f" -- -I./binder -I./ashmem -I./test 2>&1 | tee -a clang-tidy-report.txt
+                  done
 
-      - name: Upload clang-tidy report
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: clang-tidy-report
-          path: clang-tidy-report.txt
+            - name: Upload clang-tidy report
+              if: always()
+              uses: actions/upload-artifact@v4
+              with:
+                  name: clang-tidy-report
+                  path: clang-tidy-report.txt
 
-  compat-check:
-    name: compat-check
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Check compat macro usage
-        run: .github/scripts/check-compat.sh
+    compat-check:
+        name: compat-check
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v4
+            - name: Check compat macro usage
+              run: .github/scripts/check-compat.sh
 
-      - name: Check for stray version guards
-        run: |
-          FOUND=0
-          for f in binder/binder.c binder/binderfs.c binder/binder_alloc.c \
-                   binder/binder_alloc.h binder/binder_internal.h ashmem/ashmem.c; do
-            if grep -n 'LINUX_VERSION_CODE' "$f"; then
-              FOUND=1
-            fi
-          done
-          if [ "$FOUND" -ne 0 ]; then
-            echo "::error::Found LINUX_VERSION_CODE in functional source"
-            exit 1
-          fi
+            - name: Check for stray version guards
+              run: |
+                  FOUND=0
+                  for f in binder/binder.c binder/binderfs.c binder/binder_alloc.c \
+                           binder/binder_alloc.h binder/binder_internal.h ashmem/ashmem.c; do
+                    if grep -n 'LINUX_VERSION_CODE' "$f"; then
+                      FOUND=1
+                    fi
+                  done
+                  if [ "$FOUND" -ne 0 ]; then
+                    echo "::error::Found LINUX_VERSION_CODE in functional source"
+                    exit 1
+                  fi

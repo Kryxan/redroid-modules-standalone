@@ -57,9 +57,9 @@ make -C test run-all
 ashmem/                 ashmem module sources + dkms config
 binder/                 binder module sources + dkms config
 test/                   userspace validation tests
-	ashmem_test.c         focused ashmem test suite
-	test.c                binderfs device creation test
-	test_ipc.c            combined binderfs+binder+ashmem validation
+ ashmem_test.c         focused ashmem test suite
+ test.c                binderfs device creation test
+ test_ipc.c            combined binderfs+binder+ashmem validation
 deploy/                 k8s deployment templates
 docs/                   compatibility and planning docs
 .github/workflows/      CI/CD pipelines
