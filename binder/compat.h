@@ -122,9 +122,11 @@ extern void zap_page_range(struct vm_area_struct *, unsigned long, unsigned long
 #endif
 
 /* ------------------------------------------------------------------ */
-/* Shrinker API: dynamic allocation in 6.0+                           */
+/* Shrinker API: dynamic allocation in 6.7+                           */
+/* (shrinker_alloc/shrinker_free/shrinker_register replaced           */
+/*  register_shrinker/unregister_shrinker starting in 6.7)           */
 /* ------------------------------------------------------------------ */
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 0, 0)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 7, 0)
 #define COMPAT_SHRINKER_DYNAMIC 1
 #else
 #define COMPAT_SHRINKER_DYNAMIC 0
@@ -132,22 +134,18 @@ extern void zap_page_range(struct vm_area_struct *, unsigned long, unsigned long
 
 /* ------------------------------------------------------------------ */
 /* LSM: security context API drift                                    */
-/*   6.12+: struct lsm_context  (.context, .len)                      */
-/*   6.8+:  struct lsmcontext   (.context, .len)                      */
+/*   6.8+:  struct lsm_context  (.context, .len)  [renamed from       */
+/*          lsmcontext in 6.8]                                        */
 /*   <6.8:  separate char* + u32                                      */
 /* ------------------------------------------------------------------ */
 #include <linux/security.h>
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 8, 0)
 
-/* 6.8+ uses a struct-based API; the struct name changed in 6.12 */
+/* 6.8+ uses a struct-based API (struct lsm_context, renamed from lsmcontext) */
 typedef struct
 {
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 12, 0)
     struct lsm_context inner;
-#else
-    struct lsmcontext inner;
-#endif
 } compat_lsm_ctx_t;
 
 #define COMPAT_LSM_CTX_INIT {{0}}

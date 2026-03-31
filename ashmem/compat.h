@@ -25,9 +25,11 @@
 #endif
 
 /* ------------------------------------------------------------------ */
-/* Shrinker API: dynamic allocation in 6.0+                           */
+/* Shrinker API: dynamic allocation in 6.7+                           */
+/* (shrinker_alloc/shrinker_free/shrinker_register replaced           */
+/*  register_shrinker/unregister_shrinker starting in 6.7)           */
 /* ------------------------------------------------------------------ */
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 0, 0)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 7, 0)
 #define COMPAT_SHRINKER_DYNAMIC 1
 #else
 #define COMPAT_SHRINKER_DYNAMIC 0

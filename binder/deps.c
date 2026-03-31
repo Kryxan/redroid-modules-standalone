@@ -178,7 +178,7 @@ init_ipc_ns_ptr_t get_init_ipc_ns_ptr(void)
 	return init_ipc_ns_ptr;
 }
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 8, 0)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 11, 0)
 typedef int (*task_work_add_ptr_t)(struct task_struct *task, struct callback_head *twork, enum task_work_notify_mode notify);
 static task_work_add_ptr_t task_work_add_ptr = NULL;
 int task_work_add(struct task_struct *task, struct callback_head *twork, enum task_work_notify_mode notify)
