@@ -60,7 +60,7 @@ jobs:
           fi
           apt-get update
           apt-get install -y --no-install-recommends \
-            build-essential clang kmod python3 util-linux \
+            build-essential clang kmod python3 util-linux libelf1 \
             ${{ matrix.headers_pkg }}
 
       - name: Detect kernel headers

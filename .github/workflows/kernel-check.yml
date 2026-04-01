@@ -120,7 +120,7 @@ jobs:
           fi
           apt-get update -qq
           apt-get install -y -qq --no-install-recommends \
-            build-essential kmod git python3 util-linux ${{ matrix.headers_pkg }} 2>&1 | tail -5
+            build-essential kmod git python3 util-linux libelf1 ${{ matrix.headers_pkg }} 2>&1 | tail -5
 
       - uses: actions/checkout@v4
 

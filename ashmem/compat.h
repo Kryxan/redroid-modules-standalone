@@ -12,39 +12,7 @@
 
 #include <linux/version.h>
 #include <linux/mm.h>
-
-/* ------------------------------------------------------------------ */
-/* MM: get_unmapped_area API drift                                     */
-/* ------------------------------------------------------------------ */
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 12, 0)
-static inline unsigned long compat_get_unmapped_area(struct mm_struct *mm,
-                                                      struct file *file,
-                                                      unsigned long addr,
-                                                      unsigned long len,
-                                                      unsigned long pgoff,
-                                                      unsigned long flags)
-{
-    typedef unsigned long (*mm_get_umap_mm_t)(struct mm_struct *,
-                                               struct file *,
-                                               unsigned long,
-                                               unsigned long,
-                                               unsigned long,
-                                               unsigned long);
-    typedef unsigned long (*mm_get_umap_file_t)(struct file *,
-                                                 unsigned long,
-                                                 unsigned long,
-                                                 unsigned long,
-                                                 unsigned long);
-
-    if (__builtin_types_compatible_p(typeof(&mm_get_unmapped_area), mm_get_umap_mm_t))
-        return ((mm_get_umap_mm_t)mm_get_unmapped_area)(mm, file, addr, len, pgoff, flags);
-
-    return ((mm_get_umap_file_t)mm_get_unmapped_area)(file, addr, len, pgoff, flags);
-}
-#else
-#define compat_get_unmapped_area(mm, file, addr, len, pgoff, flags) \
-    (mm)->get_unmapped_area(file, addr, len, pgoff, flags)
-#endif
+#include <linux/shrinker.h>
 
 /* ------------------------------------------------------------------ */
 /* Shrinker API: dynamic allocation in 6.7+                           */
@@ -60,12 +28,23 @@ static inline unsigned long compat_get_unmapped_area(struct mm_struct *mm,
 /* ------------------------------------------------------------------ */
 /* Shrinker registration helper: signature differs across kernels      */
 /* ------------------------------------------------------------------ */
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 0, 0)
-#define compat_register_shrinker(shrinker, name) \
-    register_shrinker((shrinker), (name))
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 7, 0)
+#define compat_register_shrinker(shrinker, name) 0
 #else
+static inline int compat_register_shrinker_impl(struct shrinker *shrinker,
+                                                const char *name)
+{
+    typedef int (*register_shrinker_one_t)(struct shrinker *);
+    typedef int (*register_shrinker_two_t)(struct shrinker *, const char *, ...);
+
+    if (__builtin_types_compatible_p(typeof(&register_shrinker), register_shrinker_two_t))
+        return ((register_shrinker_two_t)register_shrinker)(shrinker, name);
+
+    return ((register_shrinker_one_t)register_shrinker)(shrinker);
+}
+
 #define compat_register_shrinker(shrinker, name) \
-    register_shrinker((shrinker))
+    compat_register_shrinker_impl((shrinker), (name))
 #endif
 
 #define compat_unregister_shrinker(shrinker) unregister_shrinker((shrinker))
@@ -86,11 +65,7 @@ static inline void vma_set_anonymous(struct vm_area_struct *vma)
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 3, 0)
 #define compat_vm_flags_clear(vma, flags) vm_flags_clear(vma, flags)
 #else
-#define compat_vm_flags_clear(vma, flags) \
-    do                                    \
-    {                                     \
-        (vma)->vm_flags &= ~(flags);      \
-    } while (0)
+#define compat_vm_flags_clear(vma, flags) do { } while (0)
 #endif
 
 #endif /* _ASHMEM_COMPAT_H */
