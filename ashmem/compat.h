@@ -14,15 +14,10 @@
 #include <linux/mm.h>
 
 /* ------------------------------------------------------------------ */
-/* MM: mm_get_unmapped_area added in 6.0, replacing direct callback   */
+/* MM: use VMA callback for broad distro-kernel compatibility          */
 /* ------------------------------------------------------------------ */
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 0, 0)
-#define compat_get_unmapped_area(mm, file, addr, len, pgoff, flags) \
-    mm_get_unmapped_area(mm, file, addr, len, pgoff, flags)
-#else
 #define compat_get_unmapped_area(mm, file, addr, len, pgoff, flags) \
     (mm)->get_unmapped_area(file, addr, len, pgoff, flags)
-#endif
 
 /* ------------------------------------------------------------------ */
 /* Shrinker API: dynamic allocation in 6.7+                           */
@@ -34,6 +29,19 @@
 #else
 #define COMPAT_SHRINKER_DYNAMIC 0
 #endif
+
+/* ------------------------------------------------------------------ */
+/* Shrinker registration helper: signature differs across kernels      */
+/* ------------------------------------------------------------------ */
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 0, 0)
+#define compat_register_shrinker(shrinker, name) \
+    register_shrinker((shrinker), (name))
+#else
+#define compat_register_shrinker(shrinker, name) \
+    register_shrinker((shrinker))
+#endif
+
+#define compat_unregister_shrinker(shrinker) unregister_shrinker((shrinker))
 
 /* ------------------------------------------------------------------ */
 /* VMA: vma_set_anonymous added in 4.18                               */

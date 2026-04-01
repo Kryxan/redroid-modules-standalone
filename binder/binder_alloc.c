@@ -1078,7 +1078,7 @@ int binder_alloc_shrinker_init(void)
 		binder_shrinker->seeks = DEFAULT_SEEKS;
 		shrinker_register(binder_shrinker);
 #else
-		ret = register_shrinker(&binder_shrinker);
+		ret = compat_register_shrinker(&binder_shrinker, "android-binder");
 		if (ret)
 			list_lru_destroy(&binder_alloc_lru);
 #endif
@@ -1092,7 +1092,7 @@ void binder_alloc_shrinker_exit(void)
 #if COMPAT_SHRINKER_DYNAMIC
 	shrinker_free(binder_shrinker);
 #else
-	unregister_shrinker(&binder_shrinker);
+	compat_unregister_shrinker(&binder_shrinker);
 #endif
 	list_lru_destroy(&binder_alloc_lru);
 }

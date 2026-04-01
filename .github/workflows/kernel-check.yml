@@ -11,115 +11,151 @@
 name: Kernel Update Check
 
 on:
-    schedule:
-        # Every Monday at 06:00 UTC
-        - cron: "0 6 * * 1"
-    workflow_dispatch:
+  schedule:
+    # Every Monday at 06:00 UTC
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
 
 permissions:
-    contents: read
-    issues: write
+  contents: read
+  issues: write
 
 jobs:
-    check:
-        name: Check for new kernels
-        runs-on: ubuntu-latest
-        steps:
-            - uses: actions/checkout@v4
+  check:
+    name: Check for new kernels
+    runs-on: ubuntu-latest
+    outputs:
+      new_kernels: ${{ steps.check.outputs.new_kernels }}
+      report: ${{ steps.check.outputs.report }}
+    steps:
+      - uses: actions/checkout@v4
 
-            - name: Check distro kernel versions
-              id: check
-              run: |
-                  .github/scripts/check-kernels.sh > /tmp/kernel-report.txt 2>&1
-                  echo "report<<REPORT_EOF" >> "$GITHUB_OUTPUT"
-                  cat /tmp/kernel-report.txt  >> "$GITHUB_OUTPUT"
-                  echo "REPORT_EOF"           >> "$GITHUB_OUTPUT"
-                  # Exit code 0 = no new kernels; 1 = new kernels found
-                  if grep -q '^NEW:' /tmp/kernel-report.txt; then
-                    echo "new_kernels=true" >> "$GITHUB_OUTPUT"
-                  else
-                    echo "new_kernels=false" >> "$GITHUB_OUTPUT"
-                  fi
+      - name: Check distro kernel versions
+        id: check
+        run: |
+          .github/scripts/check-kernels.sh > /tmp/kernel-report.txt 2>&1
+          echo "report<<REPORT_EOF" >> "$GITHUB_OUTPUT"
+          cat /tmp/kernel-report.txt  >> "$GITHUB_OUTPUT"
+          echo "REPORT_EOF"           >> "$GITHUB_OUTPUT"
+          # Exit code 0 = no new kernels; 1 = new kernels found
+          if grep -q '^NEW:' /tmp/kernel-report.txt; then
+            echo "new_kernels=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "new_kernels=false" >> "$GITHUB_OUTPUT"
+          fi
 
-            - name: Open issue for new kernels
-              if: steps.check.outputs.new_kernels == 'true'
-              uses: actions/github-script@v7
-              with:
-                  script: |
-                      const title = `New kernel headers available – ${new Date().toISOString().slice(0,10)}`;
-                      const body = `## Kernel Update Check\n\nNew kernel-header packages were detected.\nA build should be attempted to verify compat layer coverage.\n\n\`\`\`\n${process.env.REPORT}\n\`\`\`\n\n### Next steps\n1. Run the **Build** workflow with \`workflow_dispatch\` against the new headers.\n2. Fix any compat breakages in \`binder/compat.h\` or \`ashmem/compat.h\`.\n3. Update \`.github/kernel-versions.json\` once the build passes.\n`;
-                      // Avoid duplicate issues
-                      const existing = await github.rest.issues.listForRepo({
-                        owner: context.repo.owner,
-                        repo: context.repo.repo,
-                        state: 'open',
-                        labels: 'kernel-update',
-                        per_page: 5,
-                      });
-                      if (existing.data.length > 0) {
-                        // Comment on the newest open issue instead
-                        await github.rest.issues.createComment({
-                          owner: context.repo.owner,
-                          repo: context.repo.repo,
-                          issue_number: existing.data[0].number,
-                          body: body,
-                        });
-                      } else {
-                        await github.rest.issues.create({
-                          owner: context.repo.owner,
-                          repo: context.repo.repo,
-                          title: title,
-                          body: body,
-                          labels: ['kernel-update'],
-                        });
-                      }
-              env:
-                  REPORT: ${{ steps.check.outputs.report }}
+      - name: Open issue for new kernels
+        if: steps.check.outputs.new_kernels == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const title = `New kernel headers available – ${new Date().toISOString().slice(0,10)}`;
+            const body = `## Kernel Update Check\n\nNew kernel-header packages were detected.\nA build should be attempted to verify compat layer coverage.\n\n\`\`\`\n${process.env.REPORT}\n\`\`\`\n\n### Next steps\n1. Run the **Build** workflow with \`workflow_dispatch\` against the new headers.\n2. Fix any compat breakages in \`binder/compat.h\` or \`ashmem/compat.h\`.\n3. Update \`.github/kernel-versions.json\` once the build passes.\n`;
+            // Avoid duplicate issues
+            const existing = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: 'kernel-update',
+              per_page: 5,
+            });
+            if (existing.data.length > 0) {
+              // Comment on the newest open issue instead
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: existing.data[0].number,
+                body: body,
+              });
+            } else {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: title,
+                body: body,
+                labels: ['kernel-update'],
+              });
+            }
+        env:
+          REPORT: ${{ steps.check.outputs.report }}
 
-    # ------------------------------------------------------------------
-    # Attempt an actual build against available headers from each distro
-    # ------------------------------------------------------------------
-    test-build:
-        name: "Test build (${{ matrix.name }})"
-        needs: check
-        if: needs.check.outputs.new_kernels == 'true' || github.event_name == 'workflow_dispatch'
-        runs-on: ubuntu-latest
-        container:
-            image: "${{ matrix.image }}"
-        strategy:
-            fail-fast: false
-            matrix:
-                include:
-                    - name: "Ubuntu 24.04"
-                      image: "ubuntu:24.04"
-                      headers_pkg: "linux-headers-generic"
-                    - name: "Debian trixie"
-                      image: "debian:trixie"
-                      headers_pkg: "linux-headers-amd64"
-        steps:
-            - name: Install deps
-              run: |
-                  export DEBIAN_FRONTEND=noninteractive
-                  apt-get update -qq
-                  apt-get install -y -qq --no-install-recommends \
-                    build-essential kmod git ${{ matrix.headers_pkg }} 2>&1 | tail -5
+  # ------------------------------------------------------------------
+  # Attempt an actual build against available headers from each distro
+  # ------------------------------------------------------------------
+  test-build:
+    name: "Test build (${{ matrix.name }})"
+    needs: check
+    if: needs.check.outputs.new_kernels == 'true' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    container:
+      image: "${{ matrix.image }}"
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: "Ubuntu 24.04"
+            image: "ubuntu:24.04"
+            headers_pkg: "linux-headers-generic"
+            pre_install: ""
+          - name: "Debian trixie"
+            image: "debian:trixie"
+            headers_pkg: "linux-headers-amd64"
+            pre_install: ""
+          - name: "Proxmox 8"
+            image: "debian:12"
+            headers_pkg: "pve-headers"
+            pre_install: |
+              echo 'deb [trusted=yes] http://download.proxmox.com/debian/pve bookworm pve-no-subscription' > /etc/apt/sources.list.d/pve-install-repo.list
+          - name: "Proxmox 9"
+            image: "debian:trixie"
+            headers_pkg: "pve-headers"
+            pre_install: |
+              echo 'deb [trusted=yes] http://download.proxmox.com/debian/pve trixie pve-no-subscription' > /etc/apt/sources.list.d/pve-install-repo.list
+    steps:
+      - name: Install deps
+        run: |
+          export DEBIAN_FRONTEND=noninteractive
+          if [ -n "${{ matrix.pre_install }}" ]; then
+            sh -ec "${{ matrix.pre_install }}"
+          fi
+          apt-get update -qq
+          apt-get install -y -qq --no-install-recommends \
+            build-essential kmod git python3 util-linux ${{ matrix.headers_pkg }} 2>&1 | tail -5
 
-            - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-            - name: Detect headers
-              id: kernel
-              run: |
-                  KDIR=$(ls -d /lib/modules/*/build 2>/dev/null | sort -V | tail -1)
-                  KVER=$(basename "$(dirname "$KDIR")")
-                  echo "kdir=$KDIR" >> "$GITHUB_OUTPUT"
-                  echo "kver=$KVER" >> "$GITHUB_OUTPUT"
+      - name: Detect headers
+        id: kernel
+        run: |
+          KDIR=$(ls -d /lib/modules/*/build 2>/dev/null | sort -V | tail -1 || true)
+          if [ -z "$KDIR" ]; then
+            KDIR=$(find /usr/src -maxdepth 1 -type d -name 'linux-headers-*' \
+              ! -name '*-common' ! -name '*-common-*' \
+              | sort -V | tail -1 || true)
+          fi
+          if [ -z "$KDIR" ] || [ ! -f "$KDIR/Makefile" ]; then
+            echo "::error::No usable kernel headers found"
+            ls -la /lib/modules || true
+            ls -la /usr/src || true
+            exit 1
+          fi
+          if [ "$(basename "$KDIR")" = "build" ]; then
+            KVER=$(basename "$(dirname "$KDIR")")
+          else
+            KVER=$(basename "$KDIR" | sed 's/^linux-headers-//')
+          fi
+          echo "kdir=$KDIR" >> "$GITHUB_OUTPUT"
+          echo "kver=$KVER" >> "$GITHUB_OUTPUT"
 
-            - name: Build
-              run: make KERNEL_SRC="${{ steps.kernel.outputs.kdir }}" 2>&1
+      - name: Build
+        run: make KERNEL_SRC="${{ steps.kernel.outputs.kdir }}" 2>&1
 
-            - name: Report
-              if: always()
-              run: |
-                  echo "## Build result for ${{ matrix.name }}"
-                  modinfo ashmem/ashmem_linux.ko 2>&1 || echo "ashmem: build failed"
-                  modinfo binder/binder_linux.ko 2>&1 || echo "binder: build failed"
+      - name: Runtime verify
+        run: make ci-test
+
+      - name: Report
+        if: always()
+        run: |
+          echo "## Build result for ${{ matrix.name }}"
+          modinfo ashmem/ashmem_linux.ko 2>&1 || echo "ashmem: build failed"
+          modinfo binder/binder_linux.ko 2>&1 || echo "binder: build failed"

@@ -1192,7 +1192,7 @@ static int __init ashmem_init(void)
 
 	shrinker_register(ashmem_shrinker);
 #else
-	ret = register_shrinker(&ashmem_shrinker);
+	ret = compat_register_shrinker(&ashmem_shrinker, "android-ashmem");
 	if (ret)
 	{
 		pr_err("failed to register shrinker!\n");
@@ -1223,7 +1223,7 @@ static void __exit ashmem_exit(void)
 #if COMPAT_SHRINKER_DYNAMIC
 	shrinker_free(ashmem_shrinker);
 #else
-	unregister_shrinker(&ashmem_shrinker);
+	compat_unregister_shrinker(&ashmem_shrinker);
 #endif
 	misc_deregister(&ashmem_misc);
 	kmem_cache_destroy(ashmem_range_cachep);

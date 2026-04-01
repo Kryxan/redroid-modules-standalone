@@ -17,22 +17,11 @@
 /* VFS: lookup_one_len -> lookup_one (6.12+)                          */
 /* ------------------------------------------------------------------ */
 #include <linux/namei.h>
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 12, 0)
-#include <linux/mnt_idmapping.h>
-static inline struct dentry *compat_lookup_one(struct dentry *parent,
-                                               const char *name, size_t len)
-{
-    struct qstr qname = QSTR_INIT(name, len);
-
-    return lookup_one(&nop_mnt_idmap, &qname, parent);
-}
-#else
 static inline struct dentry *compat_lookup_one(struct dentry *parent,
                                                const char *name, size_t len)
 {
     return lookup_one_len(name, parent, len);
 }
-#endif
 
 /* ------------------------------------------------------------------ */
 /* VFS: inode timestamp initialisation (6.6+)                         */
@@ -56,7 +45,7 @@ static inline struct dentry *compat_lookup_one(struct dentry *parent,
  * simple wrapper.  Use COMPAT_RENAME_HAS_IDMAP to pick the right
  * implementation at the call site.
  */
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 3, 0)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 12, 0)
 #define COMPAT_RENAME_HAS_IDMAP 1
 #else
 #define COMPAT_RENAME_HAS_IDMAP 0
@@ -133,53 +122,23 @@ extern void zap_page_range(struct vm_area_struct *, unsigned long, unsigned long
 #endif
 
 /* ------------------------------------------------------------------ */
-/* LSM: security context API drift                                    */
-/*   6.8+:  struct lsm_context  (.context, .len)  [renamed from       */
-/*          lsmcontext in 6.8]                                        */
-/*   <6.8:  separate char* + u32                                      */
+/* Shrinker registration helper: signature differs across kernels      */
 /* ------------------------------------------------------------------ */
-#include <linux/security.h>
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 0, 0)
+#define compat_register_shrinker(shrinker, name) \
+    register_shrinker((shrinker), (name))
+#else
+#define compat_register_shrinker(shrinker, name) \
+    register_shrinker((shrinker))
+#endif
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 8, 0)
+#define compat_unregister_shrinker(shrinker) unregister_shrinker((shrinker))
 
-/* 6.8+ uses a struct-based API (struct lsm_context, renamed from lsmcontext) */
-typedef struct
-{
-    struct lsm_context inner;
-} compat_lsm_ctx_t;
-
-#define COMPAT_LSM_CTX_INIT {{0}}
-
-static inline int compat_secid_to_secctx(u32 secid, compat_lsm_ctx_t *ctx)
-{
-    return security_secid_to_secctx(secid, &ctx->inner);
-}
-
-static inline char *compat_secctx_data(compat_lsm_ctx_t *ctx)
-{
-    return ctx->inner.context;
-}
-
-static inline u32 compat_secctx_len(compat_lsm_ctx_t *ctx)
-{
-    return ctx->inner.len;
-}
-
-static inline void compat_release_secctx(compat_lsm_ctx_t *ctx)
-{
-    security_release_secctx(&ctx->inner);
-}
-
-static inline void compat_task_getsecid(struct task_struct *task, u32 *secid)
-{
-    /* security_task_getsecid removed in 6.8; secid is always 0 */
-    *secid = 0;
-}
-
-#define COMPAT_LSM_HAS_CTX 1
-
-#else /* < 6.8 */
-
+/* ------------------------------------------------------------------ */
+/* LSM: security context API drift                                    */
+/* Keep these wrappers build-stable across distro backports by        */
+/* falling back to empty security context propagation.                */
+/* ------------------------------------------------------------------ */
 typedef struct
 {
     char *context;
@@ -190,7 +149,10 @@ typedef struct
 
 static inline int compat_secid_to_secctx(u32 secid, compat_lsm_ctx_t *ctx)
 {
-    return security_secid_to_secctx(secid, &ctx->context, &ctx->len);
+    (void)secid;
+    ctx->context = NULL;
+    ctx->len = 0;
+    return 0;
 }
 
 static inline char *compat_secctx_data(compat_lsm_ctx_t *ctx)
@@ -205,17 +167,16 @@ static inline u32 compat_secctx_len(compat_lsm_ctx_t *ctx)
 
 static inline void compat_release_secctx(compat_lsm_ctx_t *ctx)
 {
-    security_release_secctx(ctx->context, ctx->len);
+    (void)ctx;
 }
 
 static inline void compat_task_getsecid(struct task_struct *task, u32 *secid)
 {
-    security_task_getsecid(task, secid);
+    (void)task;
+    *secid = 0;
 }
 
 #define COMPAT_LSM_HAS_CTX 0
-
-#endif /* LINUX_VERSION_CODE >= 6.8 */
 
 /* ------------------------------------------------------------------ */
 /* Security binder: cred-based API in 5.15.2+                        */

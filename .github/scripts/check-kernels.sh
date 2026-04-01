@@ -73,10 +73,12 @@ check_debian() {
 
 # --- Proxmox VE ---
 check_proxmox() {
-    add_line "--- Proxmox VE ---"
+    local label="$1"
+    local suite="$2"
+    add_line "--- Proxmox VE $label ($suite) ---"
 
     # Query the Proxmox package repo for pve-headers
-    local url="http://download.proxmox.com/debian/pve/dists/bookworm/pve-no-subscription/binary-amd64/Packages.gz"
+    local url="http://download.proxmox.com/debian/pve/dists/$suite/pve-no-subscription/binary-amd64/Packages.gz"
     local versions
     versions=$(curl -sfL "$url" 2>/dev/null \
         | zcat 2>/dev/null \
@@ -88,11 +90,11 @@ check_proxmox() {
             if is_known "$v"; then
                 add_line "  $v (known)"
             else
-                add_line "NEW: $v (Proxmox VE)"
+                add_line "NEW: $v (Proxmox VE $label)"
             fi
         done <<< "$versions"
     else
-        add_line "  (could not query Proxmox repo)"
+        add_line "  (could not query Proxmox VE $label repo)"
     fi
 }
 
@@ -100,7 +102,8 @@ check_ubuntu "24.04" "noble"
 check_ubuntu "22.04" "jammy"
 check_debian "bookworm"
 check_debian "trixie"
-check_proxmox
+check_proxmox "8" "bookworm"
+check_proxmox "9" "trixie"
 
 add_line ""
 add_line "=== End ==="

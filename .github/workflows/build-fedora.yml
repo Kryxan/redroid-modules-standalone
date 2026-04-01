@@ -1,0 +1,93 @@
+name: Build and Validate (Fedora)
+
+on:
+    push:
+        branches: [main, master]
+        paths-ignore: ["**/*.md", "docs/**"]
+    pull_request:
+        branches: [main, master]
+        paths-ignore: ["**/*.md", "docs/**"]
+    workflow_dispatch:
+
+permissions:
+    contents: read
+
+jobs:
+    fedora:
+        name: fedora-latest
+        runs-on: ubuntu-latest
+        container:
+            image: fedora:latest
+
+        steps:
+            - uses: actions/checkout@v4
+
+            - name: Install dependencies and kernel headers
+              shell: bash
+              run: |
+                  set -euo pipefail
+                  KREL="$(uname -r)"
+
+                  dnf -y install \
+                    make gcc clang kmod util-linux python3 findutils which
+
+                  if ! dnf -y install "kernel-devel-${KREL}" "kernel-headers-${KREL}"; then
+                    echo "::warning::kernel-devel/kernel-headers for running kernel ${KREL} unavailable; trying generic packages"
+                    if ! dnf -y install kernel-devel kernel-headers; then
+                      echo "::error::Missing Fedora kernel headers: kernel-devel-${KREL} (or generic kernel-devel/kernel-headers)"
+                      exit 1
+                    fi
+                  fi
+
+            - name: Detect kernel headers
+              id: kernel
+              shell: bash
+              run: |
+                  set -euo pipefail
+                  KDIR=""
+                  if [ -d "/lib/modules/$(uname -r)/build" ]; then
+                    KDIR="/lib/modules/$(uname -r)/build"
+                  else
+                    KDIR="$(find /usr/src/kernels -maxdepth 1 -mindepth 1 -type d | sort -V | tail -1 || true)"
+                  fi
+
+                  if [ -z "$KDIR" ] || [ ! -f "$KDIR/Makefile" ]; then
+                    echo "::error::No usable kernel headers found"
+                    ls -la /lib/modules || true
+                    ls -la /usr/src || true
+                    ls -la /usr/src/kernels || true
+                    exit 1
+                  fi
+
+                  echo "kdir=$KDIR" >> "$GITHUB_OUTPUT"
+                  echo "kver=$(basename "$KDIR")" >> "$GITHUB_OUTPUT"
+
+            - name: Build modules
+              shell: bash
+              run: make KERNEL_SRC="${{ steps.kernel.outputs.kdir }}"
+
+            - name: Build userspace tests
+              shell: bash
+              run: make -C test all
+
+            - name: Runtime validation (binderfs + binder + ashmem)
+              shell: bash
+              run: make ci-test
+
+            - name: Collect module artifacts
+              shell: bash
+              run: |
+                  set -euo pipefail
+                  mkdir -p dist
+                  cp ashmem/ashmem_linux.ko dist/
+                  cp binder/binder_linux.ko dist/
+                  if [ -f binder/binderfs.ko ]; then
+                    cp binder/binderfs.ko dist/
+                  fi
+
+            - name: Upload artifacts
+              uses: actions/upload-artifact@v4
+              with:
+                  name: fedora-modules-${{ steps.kernel.outputs.kver }}
+                  path: dist/*.ko
+                  if-no-files-found: error

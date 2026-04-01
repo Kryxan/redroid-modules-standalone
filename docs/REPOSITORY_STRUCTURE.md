@@ -5,10 +5,17 @@ This repository is intentionally organized as a clean derivative project:
 ```text
 .github/
   workflows/
-    build.yml            multi-distro DKMS module build validation
+    build.yml            Ubuntu/Debian/Proxmox matrix build validation
+    build-fedora.yml     Fedora latest build + runtime validation
+    build-silverblue.yml Fedora Silverblue toolbox-oriented build validation
+    build-rhel-centos.yml RHEL/CentOS Stream 8/9 build validation
     dkms-package.yml     packaging (deb + tar.gz) artifacts
     analyze.yml          sparse + clang-tidy + compat checks
+    kernel-check.yml     scheduled kernel update + matrix test build
   scripts/
+scripts/
+  detect-ipc-runtime.sh unified binderfs/binder/ashmem runtime detector
+  verify-environment.sh strict runtime verification wrapper
 ashmem/
 binder/
 deploy/
@@ -25,6 +32,12 @@ README.md
 .gitignore
 Makefile
 ```
+
+## Local reference assets
+
+The repository intentionally excludes local kernel header copies used for
+development reference (for example `linux-headers-6.17.13-2-pve`). Keep those
+outside version control.
 
 ## Why this layout
 

@@ -26,14 +26,29 @@ jobs:
           - distro: ubuntu-24.04
             image: ubuntu:24.04
             headers_pkg: linux-headers-generic
+            pre_install: ""
           - distro: debian-13
             image: debian:trixie
             headers_pkg: linux-headers-amd64
+            pre_install: ""
+          - distro: proxmox-8
+            image: debian:12
+            headers_pkg: pve-headers
+            pre_install: |
+              echo 'deb [trusted=yes] http://download.proxmox.com/debian/pve bookworm pve-no-subscription' > /etc/apt/sources.list.d/pve-install-repo.list
+          - distro: proxmox-9
+            image: debian:trixie
+            headers_pkg: pve-headers
+            pre_install: |
+              echo 'deb [trusted=yes] http://download.proxmox.com/debian/pve trixie pve-no-subscription' > /etc/apt/sources.list.d/pve-install-repo.list
 
     steps:
       - name: Install packaging tools
         run: |
           export DEBIAN_FRONTEND=noninteractive
+          if [ -n "${{ matrix.pre_install }}" ]; then
+            sh -ec "${{ matrix.pre_install }}"
+          fi
           apt-get update
           apt-get install -y --no-install-recommends \
             build-essential kmod dkms git fakeroot dpkg-dev debhelper \

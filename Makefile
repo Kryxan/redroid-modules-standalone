@@ -1,9 +1,9 @@
 .DEFAULT_GOAL := all
 
-TOPTARGETS := all install modules_install load reload uninstall clean clean-modules dkms-install verify info
+MODULE_TARGETS := all install modules_install load reload uninstall clean clean-modules dkms-install info
 SUBDIRS := ashmem binder
 
-$(TOPTARGETS): $(SUBDIRS)
+$(MODULE_TARGETS): $(SUBDIRS)
 
 $(SUBDIRS):
 	$(MAKE) -C $@ $(MAKECMDGOALS)
@@ -15,6 +15,15 @@ ci-build:
 	$(MAKE) -C ashmem all
 	$(MAKE) -C binder all
 	$(MAKE) -C test all
+
+# Runtime environment verification for binderfs/binder/ashmem.
+verify:
+	@bash ./scripts/verify-environment.sh --format keyvalue
+
+# CI runtime tests without module installation side effects.
+ci-test:
+	$(MAKE) -C test all
+	@bash ./scripts/verify-environment.sh --strict --format keyvalue
 
 # Quick sanity: ensure compat macros are consumed and no stray version guards.
 ci-check:
@@ -34,4 +43,4 @@ ci-check:
 	done; \
 	if [ "$$FOUND" -eq 0 ]; then echo "OK: no stray version guards."; fi
 
-.PHONY: $(TOPTARGETS) $(SUBDIRS) ci-build ci-check
+.PHONY: $(MODULE_TARGETS) $(SUBDIRS) ci-build ci-test ci-check verify
