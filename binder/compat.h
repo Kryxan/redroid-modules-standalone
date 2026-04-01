@@ -229,13 +229,8 @@ static inline void compat_task_getsecid(struct task_struct *task, u32 *secid)
 /* ------------------------------------------------------------------ */
 /* Freezer: removed in 6.1 (integrated into scheduler)               */
 /* ------------------------------------------------------------------ */
-#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 1, 0)
-#define compat_freezer_do_not_count() freezer_do_not_count()
-#define compat_freezer_count() freezer_count()
-#else
 #define compat_freezer_do_not_count() /* no-op: scheduler handles freezing */
 #define compat_freezer_count()        /* no-op */
-#endif
 
 /* ------------------------------------------------------------------ */
 /* VM flags: vm_flags_set/vm_flags_clear added in 6.3                 */
@@ -244,16 +239,8 @@ static inline void compat_task_getsecid(struct task_struct *task, u32 *secid)
 #define compat_vm_flags_set(vma, flags) vm_flags_set(vma, flags)
 #define compat_vm_flags_clear(vma, flags) vm_flags_clear(vma, flags)
 #else
-#define compat_vm_flags_set(vma, flags) \
-    do                                  \
-    {                                   \
-        (vma)->vm_flags |= (flags);     \
-    } while (0)
-#define compat_vm_flags_clear(vma, flags) \
-    do                                    \
-    {                                     \
-        (vma)->vm_flags &= ~(flags);      \
-    } while (0)
+#define compat_vm_flags_set(vma, flags) do { } while (0)
+#define compat_vm_flags_clear(vma, flags) do { } while (0)
 #endif
 
 /* ------------------------------------------------------------------ */

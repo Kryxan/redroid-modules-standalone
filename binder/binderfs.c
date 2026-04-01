@@ -38,6 +38,16 @@
 #include "binder_internal.h"
 #include "compat.h"
 
+/*
+ * Some distro kernels do not expose these prototypes via included headers
+ * during external module builds even though the symbols are available.
+ */
+extern struct dentry *mount_nodev(struct file_system_type *fs_type,
+					  int flags,
+					  void *data,
+					  int (*fill_super)(struct super_block *, void *, int));
+extern void kill_litter_super(struct super_block *sb);
+
 #define FIRST_INODE 1
 #define SECOND_INODE 2
 #define INODE_OFFSET 3
