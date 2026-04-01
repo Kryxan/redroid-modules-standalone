@@ -71,7 +71,7 @@ jobs:
                     exit 0
                   fi
 
-                  if grep -Eq 'undefined!.*(kill_litter_super|mount_nodev|file_close_fd|zap_page_range_single)' /tmp/build.log; then
+                  if grep -Eq '((kill_litter_super|mount_nodev|file_close_fd|zap_page_range_single).*(undefined!|undefined reference)|undefined!.*(kill_litter_super|mount_nodev|file_close_fd|zap_page_range_single))' /tmp/build.log; then
                     echo "::warning::Silverblue toolbox kernel headers lack exported symbols needed by this external module build; skipping this job as non-actionable environment mismatch"
                     echo "skip=true" >> "$GITHUB_OUTPUT"
                     exit 0
