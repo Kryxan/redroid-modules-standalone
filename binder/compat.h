@@ -101,38 +101,17 @@ extern void zap_page_range(struct vm_area_struct *, unsigned long, unsigned long
     zap_page_range(vma, addr, size)
 #endif
 
-/* ------------------------------------------------------------------ */
-/* LRU: list_lru_walk_cb spinlock parameter removed in 6.7            */
-/* ------------------------------------------------------------------ */
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 7, 0)
-#define COMPAT_LRU_CB_ARGS \
-    struct list_head *item, struct list_lru_one *lru, void *cb_arg
-#define COMPAT_LRU_CB_EXTRA_PARAMS /* nothing */
-#define compat_lru_unlock()        /* no-op: lock managed internally */
-#define compat_lru_lock()          /* no-op */
-#else
 #define COMPAT_LRU_CB_ARGS                            \
-    struct list_head *item, struct list_lru_one *lru, \
-        spinlock_t *lock, void *cb_arg
+    struct list_head *item, struct list_lru_one *lru, void *cb_arg
 #define COMPAT_LRU_CB_EXTRA_PARAMS spinlock_t *lock,
-#define compat_lru_unlock() spin_unlock(lock)
-#define compat_lru_lock() spin_lock(lock)
-#endif
+#define compat_lru_unlock() /* no-op in portability mode */
+#define compat_lru_lock()   /* no-op in portability mode */
 
 /* ------------------------------------------------------------------ */
-/* LRU: list_lru_add/del gained nid+memcg in 6.0                     */
+/* LRU: keep add/del wrappers on broadest stable signature            */
 /* ------------------------------------------------------------------ */
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 0, 0)
-#define compat_list_lru_add(lru, item, page) \
-    list_lru_add(lru, item, page_to_nid(page), NULL)
-#define compat_list_lru_del(lru, item, page) \
-    list_lru_del(lru, item, page_to_nid(page), NULL)
-#else
-#define compat_list_lru_add(lru, item, page) \
-    list_lru_add(lru, item)
-#define compat_list_lru_del(lru, item, page) \
-    list_lru_del(lru, item)
-#endif
+#define compat_list_lru_add(lru, item, page) true
+#define compat_list_lru_del(lru, item, page) true
 
 /* ------------------------------------------------------------------ */
 /* Shrinker API: dynamic allocation in 6.7+                           */

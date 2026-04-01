@@ -15,12 +15,32 @@
 
 /* ------------------------------------------------------------------ */
 /* MM: get_unmapped_area API drift                                     */
-/*   Older kernels: mm->get_unmapped_area callback                     */
-/*   Newer kernels: mm_get_unmapped_area helper                        */
 /* ------------------------------------------------------------------ */
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 17, 0)
-#define compat_get_unmapped_area(mm, file, addr, len, pgoff, flags) \
-    mm_get_unmapped_area(mm, file, addr, len, pgoff, flags)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 12, 0)
+static inline unsigned long compat_get_unmapped_area(struct mm_struct *mm,
+                                                      struct file *file,
+                                                      unsigned long addr,
+                                                      unsigned long len,
+                                                      unsigned long pgoff,
+                                                      unsigned long flags)
+{
+    typedef unsigned long (*mm_get_umap_mm_t)(struct mm_struct *,
+                                               struct file *,
+                                               unsigned long,
+                                               unsigned long,
+                                               unsigned long,
+                                               unsigned long);
+    typedef unsigned long (*mm_get_umap_file_t)(struct file *,
+                                                 unsigned long,
+                                                 unsigned long,
+                                                 unsigned long,
+                                                 unsigned long);
+
+    if (__builtin_types_compatible_p(typeof(&mm_get_unmapped_area), mm_get_umap_mm_t))
+        return ((mm_get_umap_mm_t)mm_get_unmapped_area)(mm, file, addr, len, pgoff, flags);
+
+    return ((mm_get_umap_file_t)mm_get_unmapped_area)(file, addr, len, pgoff, flags);
+}
 #else
 #define compat_get_unmapped_area(mm, file, addr, len, pgoff, flags) \
     (mm)->get_unmapped_area(file, addr, len, pgoff, flags)

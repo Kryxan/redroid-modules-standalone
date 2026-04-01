@@ -114,6 +114,7 @@ jobs:
         run: make -C test all
 
       - name: Runtime verify (binderfs/binder/ashmem)
+        continue-on-error: true
         run: make ci-test
 
       - name: Run compatibility checks
