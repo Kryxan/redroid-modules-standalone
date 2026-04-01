@@ -17,11 +17,35 @@
 /* VFS: lookup_one_len -> lookup_one (6.12+)                          */
 /* ------------------------------------------------------------------ */
 #include <linux/namei.h>
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 12, 0)
+#include <linux/mnt_idmapping.h>
+static inline struct dentry *compat_lookup_one(struct dentry *parent,
+                                               const char *name, size_t len)
+{
+    typedef struct dentry *(*lookup_one_qstr_t)(struct mnt_idmap *,
+                                                struct qstr *,
+                                                struct dentry *);
+    typedef struct dentry *(*lookup_one_name_t)(struct mnt_idmap *,
+                                                const char *,
+                                                struct dentry *,
+                                                int);
+
+    if (__builtin_types_compatible_p(typeof(&lookup_one), lookup_one_qstr_t))
+    {
+        struct qstr qname = QSTR_INIT(name, len);
+
+        return ((lookup_one_qstr_t)lookup_one)(&nop_mnt_idmap, &qname, parent);
+    }
+
+    return ((lookup_one_name_t)lookup_one)(&nop_mnt_idmap, name, parent, (int)len);
+}
+#else
 static inline struct dentry *compat_lookup_one(struct dentry *parent,
                                                const char *name, size_t len)
 {
     return lookup_one_len(name, parent, len);
 }
+#endif
 
 /* ------------------------------------------------------------------ */
 /* VFS: inode timestamp initialisation (6.6+)                         */

@@ -30,10 +30,10 @@ jobs:
                       pkg_mgr: dnf
                     - name: rhel-ubi-8
                       image: registry.access.redhat.com/ubi8/ubi
-                      pkg_mgr: microdnf
+                      pkg_mgr: dnf
                     - name: rhel-ubi-9
                       image: registry.access.redhat.com/ubi9/ubi
-                      pkg_mgr: microdnf
+                      pkg_mgr: dnf
 
         steps:
             - uses: actions/checkout@v4

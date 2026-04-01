@@ -14,10 +14,17 @@
 #include <linux/mm.h>
 
 /* ------------------------------------------------------------------ */
-/* MM: use VMA callback for broad distro-kernel compatibility          */
+/* MM: get_unmapped_area API drift                                     */
+/*   Older kernels: mm->get_unmapped_area callback                     */
+/*   Newer kernels: mm_get_unmapped_area helper                        */
 /* ------------------------------------------------------------------ */
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 17, 0)
+#define compat_get_unmapped_area(mm, file, addr, len, pgoff, flags) \
+    mm_get_unmapped_area(mm, file, addr, len, pgoff, flags)
+#else
 #define compat_get_unmapped_area(mm, file, addr, len, pgoff, flags) \
     (mm)->get_unmapped_area(file, addr, len, pgoff, flags)
+#endif
 
 /* ------------------------------------------------------------------ */
 /* Shrinker API: dynamic allocation in 6.7+                           */
