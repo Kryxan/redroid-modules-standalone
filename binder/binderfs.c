@@ -43,9 +43,9 @@
  * during external module builds even though the symbols are available.
  */
 extern struct dentry *mount_nodev(struct file_system_type *fs_type,
-					  int flags,
-					  void *data,
-					  int (*fill_super)(struct super_block *, void *, int));
+								  int flags,
+								  void *data,
+								  int (*fill_super)(struct super_block *, void *, int));
 extern void kill_litter_super(struct super_block *sb);
 
 #define FIRST_INODE 1

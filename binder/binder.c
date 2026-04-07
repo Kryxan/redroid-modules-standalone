@@ -77,6 +77,10 @@
 #include "binder_trace.h"
 #include "compat.h"
 
+#ifndef REDROID_MODULE_VERSION
+#define REDROID_MODULE_VERSION "0.0.0"
+#endif
+
 extern struct file *file_close_fd(unsigned int fd);
 
 static HLIST_HEAD(binder_deferred_list);
@@ -6638,3 +6642,4 @@ module_exit(binder_exit);
 
 MODULE_DESCRIPTION("Android Binder IPC driver");
 MODULE_LICENSE("GPL v2");
+MODULE_VERSION(REDROID_MODULE_VERSION);

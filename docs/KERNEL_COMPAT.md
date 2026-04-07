@@ -8,7 +8,7 @@ version-gated adaptation in one place so that functional source files stay clean
 ## Compat headers
 
 | Header | Scope |
-|---|---|
+| --- | --- |
 | `binder/compat.h` | binder, binderfs, binder_alloc |
 | `ashmem/compat.h` | ashmem |
 
@@ -20,7 +20,7 @@ rather than adding `#if LINUX_VERSION_CODE` blocks to functional code.
 ### binder/compat.h
 
 | Macro / function | Since | Description |
-|---|---|---|
+| --- | --- | --- |
 | `compat_lookup_one()` | n/a | Normalized to `lookup_one_len()` for broad distro compatibility |
 | `compat_inode_init_ts()` | 6.6 | `simple_inode_init_ts()` backfill |
 | `COMPAT_RENAME_HAS_IDMAP` | 5.12 | Rename callback uses `mnt_idmap *` on idmapped kernels |
@@ -47,7 +47,7 @@ rather than adding `#if LINUX_VERSION_CODE` blocks to functional code.
 ### ashmem/compat.h
 
 | Macro / function | Since | Description |
-|---|---|---|
+| --- | --- | --- |
 | `compat_get_unmapped_area()` | n/a | Uses VMA callback path for cross-distro stability |
 | `COMPAT_SHRINKER_DYNAMIC` | 6.0 | Dynamic shrinker alloc flag |
 | `compat_register_shrinker()` | 6.0 | Handles `register_shrinker` signature differences |
@@ -72,8 +72,7 @@ are **not** candidates for the compat headers.
 
 ## Notes for Proxmox 9 baseline
 
-1. `linux-headers-6.17.13-2-pve` is used as a local build reference but is not
- part of this repository.
+1. `linux-headers-6.17.13-2-pve` is used as a local build reference.
 2. Treat binder live replacement as best-effort only on kernels where unload
  is unreliable; use reboot as the stable activation path.
 3. Prefer validating behavior with `make ci-test` and

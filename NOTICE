@@ -1,21 +1,27 @@
-Android IPC Kernel Modules (Standalone)
+# Android IPC Kernel Modules (Standalone)
+
 Copyright (c) 2026
+<https://github.com/Kryxan/redroid-modules-standalone>
 
-This repository is an independently maintained derivative project.
+## Based On Work By
 
-Based on work by:
+This project is based on prior work from the original `redroid-modules` maintainers and contributors, plus upstream Linux Android IPC interfaces.
 
-- The redroid-modules maintainers and contributors
+- Original codebase: `remote-android/redroid-modules`
+- Upstream kernel interfaces: Linux Binder/BinderFS and Ashmem-related APIs
   Original repository: <https://github.com/remote-android/redroid-modules>
-- Linux kernel contributors for Binder/BinderFS and related Android IPC interfaces
 
-Attribution and derivative status:
+## License
+
+This repository is not the canonical upstream project. It is an independently maintained derivative focused on compatibility, validation, and release engineering.
 
 - Portions of this codebase are derived from GPL-2.0-licensed source code.
 - This project applies substantial compatibility, testing, packaging, and CI/CD changes.
-- This repository is not an official upstream mirror and is maintained independently.
 
-License:
+## Disclaimer
+
+This repository is an independently maintained derivative project.
+This derivative project remains GPL-2.0 licensed.
 
 - Unless otherwise noted at file level, this project is distributed under GPL-2.0.
-- See LICENSE and LICENSES/THIRD_PARTY.md for details.
+- See `LICENSE` and this `NOTICE` file for licensing and attribution details.

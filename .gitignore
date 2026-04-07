@@ -48,6 +48,7 @@ clang-tidy-*.txt
 # CI tooling caches
 .cache/
 .ccache/
+.tmp-actions/
 
 # Editors and OS files
 .vscode/
@@ -58,3 +59,4 @@ Thumbs.db
 Desktop.ini
 
 linux-headers-*/
+adk-platform-tools/

@@ -1,0 +1,379 @@
+name: Kernel Triggered Rebuild
+
+on:
+    schedule:
+        - cron: "0 6 * * 1"
+    workflow_dispatch:
+        inputs:
+            force_all:
+                description: "Build the full kernel matrix even when no new headers are detected"
+                required: false
+                default: false
+                type: boolean
+            publish_prerelease:
+                description: "Publish successful preview artifacts to the kernel-preview prerelease"
+                required: false
+                default: true
+                type: boolean
+
+permissions:
+    contents: write
+
+jobs:
+    discover:
+        name: discover-kernels
+        runs-on: ubuntu-latest
+        outputs:
+            version: ${{ steps.repo.outputs.version }}
+            build_ref: ${{ steps.repo.outputs.build_ref }}
+            has_targets: ${{ steps.matrix.outputs.has_targets }}
+            matrix: ${{ steps.matrix.outputs.matrix }}
+            report: ${{ steps.matrix.outputs.report }}
+
+        steps:
+            - name: Check out repository
+              uses: actions/checkout@v4
+              with:
+                  fetch-depth: 0
+
+            - name: Install discovery dependencies
+              shell: bash
+              run: |
+                  set -euo pipefail
+                  sudo apt-get update
+                  sudo apt-get install -y --no-install-recommends ca-certificates curl git jq python3
+                  sudo update-ca-certificates || true
+
+            - name: Resolve repo version and build ref
+              id: repo
+              shell: bash
+              run: |
+                  set -euo pipefail
+                  chmod +x scripts/read-version.sh
+                  VERSION="$(sh ./scripts/read-version.sh)"
+                  git fetch --tags --force
+                  if git ls-remote --exit-code --heads origin prerelease >/dev/null 2>&1; then
+                    BUILD_REF="prerelease"
+                  elif git describe --tags --abbrev=0 >/dev/null 2>&1; then
+                    BUILD_REF="$(git describe --tags --abbrev=0)"
+                  else
+                    BUILD_REF="${GITHUB_REF_NAME:-main}"
+                  fi
+                  echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+                  echo "build_ref=$BUILD_REF" >> "$GITHUB_OUTPUT"
+
+            - name: Detect newly available kernel headers
+              id: matrix
+              shell: bash
+              env:
+                  FORCE_ALL: ${{ github.event.inputs.force_all || 'false' }}
+              run: |
+                  set -euo pipefail
+                  chmod +x .github/scripts/check-kernels.sh
+                  .github/scripts/check-kernels.sh > /tmp/kernel-report.txt
+
+                  echo "report<<REPORT_EOF" >> "$GITHUB_OUTPUT"
+                  cat /tmp/kernel-report.txt >> "$GITHUB_OUTPUT"
+                  echo "REPORT_EOF" >> "$GITHUB_OUTPUT"
+
+                  python3 - <<'PY' >> "$GITHUB_OUTPUT"
+                  import json
+                  import os
+
+                  force_all = os.environ.get("FORCE_ALL", "false").lower() == "true"
+                  report = open("/tmp/kernel-report.txt", "r", encoding="utf-8").read().lower()
+
+                  targets = [
+                      {
+                          "match": "ubuntu 24.04",
+                          "name": "ubuntu-24.04",
+                          "image": "ubuntu:24.04",
+                          "apt_repo": "",
+                          "headers_pkg": "linux-headers-generic",
+                          "fallback_headers_pkg": "linux-headers-cloud-amd64",
+                          "headers_urls": "",
+                      },
+                      {
+                          "match": "debian bookworm",
+                          "name": "debian-12-amd64",
+                          "image": "debian:12",
+                          "apt_repo": "",
+                          "headers_pkg": "linux-headers-amd64",
+                          "fallback_headers_pkg": "linux-headers-cloud-amd64",
+                          "headers_urls": "",
+                      },
+                      {
+                          "match": "debian trixie",
+                          "name": "debian-13-amd64",
+                          "image": "debian:trixie",
+                          "apt_repo": "",
+                          "headers_pkg": "linux-headers-amd64",
+                          "fallback_headers_pkg": "linux-headers-cloud-amd64",
+                          "headers_urls": "",
+                      },
+                      {
+                          "match": "proxmox ve 8",
+                          "name": "proxmox-8-pve",
+                          "image": "debian:12",
+                          "apt_repo": "deb [trusted=yes] http://download.proxmox.com/debian/pve bookworm pve-no-subscription",
+                          "headers_pkg": "pve-headers",
+                          "fallback_headers_pkg": "proxmox-headers",
+                          "headers_urls": "",
+                      },
+                      {
+                          "match": "proxmox ve 9",
+                          "name": "proxmox-9-pve",
+                          "image": "debian:trixie",
+                          "apt_repo": "deb [trusted=yes] http://download.proxmox.com/debian/pve trixie pve-no-subscription",
+                          "headers_pkg": "pve-headers",
+                          "fallback_headers_pkg": "proxmox-headers",
+                          "headers_urls": "",
+                      },
+                  ]
+
+                  selected = []
+                  if force_all:
+                      selected = [{k: v for k, v in target.items() if k != "match"} for target in targets]
+                  else:
+                      for target in targets:
+                          if "new:" in report and target["match"] in report:
+                              selected.append({k: v for k, v in target.items() if k != "match"})
+
+                  seen = set()
+                  deduped = []
+                  for target in selected:
+                      if target["name"] not in seen:
+                          seen.add(target["name"])
+                          deduped.append(target)
+
+                  print(f"has_targets={'true' if deduped else 'false'}")
+                  print("matrix=" + json.dumps(deduped))
+                  PY
+
+    build-kernels:
+        name: build-${{ matrix.target.name }}
+        needs: discover
+        if: needs.discover.outputs.has_targets == 'true'
+        runs-on: ubuntu-latest
+        container:
+            image: ${{ matrix.target.image }}
+        strategy:
+            fail-fast: false
+            matrix:
+                target: ${{ fromJson(needs.discover.outputs.matrix) }}
+
+        steps:
+            - name: Bootstrap CA certificates and apt sources
+              shell: bash
+              run: |
+                  set -euo pipefail
+                  if [ -n "${{ matrix.target.apt_repo }}" ]; then
+                    printf '%s\n' "${{ matrix.target.apt_repo }}" > /etc/apt/sources.list.d/redroid-extra.list
+                  fi
+                  apt-get update
+                  apt-get install -y --no-install-recommends ca-certificates git curl wget xz-utils
+                  update-ca-certificates || true
+
+            - name: Check out target source
+              uses: actions/checkout@v4
+              with:
+                  fetch-depth: 0
+                  ref: ${{ needs.discover.outputs.build_ref }}
+
+            - name: Validate repo version
+              shell: bash
+              run: |
+                  set -euo pipefail
+                  chmod +x scripts/read-version.sh scripts/validate-version.sh
+                  VERSION="$(sh ./scripts/validate-version.sh)"
+                  if [ "$VERSION" != "${{ needs.discover.outputs.version }}" ]; then
+                    echo "::error::Expected VERSION ${{ needs.discover.outputs.version }}, got $VERSION"
+                    exit 1
+                  fi
+
+            - name: Install build dependencies and headers
+              shell: bash
+              env:
+                  HEADERS_PKG: ${{ matrix.target.headers_pkg }}
+                  FALLBACK_HEADERS_PKG: ${{ matrix.target.fallback_headers_pkg }}
+                  HEADERS_URLS: ${{ matrix.target.headers_urls }}
+              run: |
+                  set -euo pipefail
+
+                  install_headers() {
+                    if apt-get install -y --no-install-recommends "$HEADERS_PKG"; then
+                      return 0
+                    fi
+                    if [ -n "$HEADERS_URLS" ]; then
+                      mkdir -p /tmp/redroid-header-debs
+                      for url in $HEADERS_URLS; do
+                        file="/tmp/redroid-header-debs/$(basename "$url")"
+                        curl -fsSL "$url" -o "$file"
+                      done
+                      dpkg -i /tmp/redroid-header-debs/*.deb || apt-get -f install -y
+                      return 0
+                    fi
+                    if [ -n "$FALLBACK_HEADERS_PKG" ]; then
+                      apt-get install -y --no-install-recommends "$FALLBACK_HEADERS_PKG"
+                      return 0
+                    fi
+                    return 1
+                  }
+
+                  apt-get update
+                  apt-get install -y --no-install-recommends build-essential clang kmod dkms python3 util-linux libelf-dev bc make
+                  install_headers
+
+            - name: Detect target kernel headers
+              id: kernel
+              shell: bash
+              run: |
+                  set -euo pipefail
+                  KDIR="$(find /lib/modules -mindepth 2 -maxdepth 2 -type d -name build 2>/dev/null | sort -V | tail -n 1 || true)"
+                  if [ -z "$KDIR" ]; then
+                    KDIR="$(find /usr/src -maxdepth 1 -type d \( -name 'linux-headers-*' -o -name 'pve-headers-*' -o -name 'proxmox-headers-*' \) 2>/dev/null | sort -V | tail -n 1 || true)"
+                  fi
+                  if [ -z "$KDIR" ] || [ ! -f "$KDIR/Makefile" ]; then
+                    echo "::error::Unable to locate a usable kernel headers tree"
+                    ls -la /lib/modules || true
+                    ls -la /usr/src || true
+                    exit 1
+                  fi
+                  case "$(basename "$KDIR")" in
+                    build)
+                      KVER="$(basename "$(dirname "$KDIR")")"
+                      ;;
+                    *)
+                      KVER="$(basename "$KDIR" | sed 's/^[^0-9]*//')"
+                      ;;
+                  esac
+                  echo "kdir=$KDIR" >> "$GITHUB_OUTPUT"
+                  echo "kver=$KVER" >> "$GITHUB_OUTPUT"
+
+            - name: Build modules and stage logs
+              id: build
+              shell: bash
+              run: |
+                  set -euo pipefail
+                  VERSION="${{ needs.discover.outputs.version }}"
+                  KVER="${{ steps.kernel.outputs.kver }}"
+                  mkdir -p dist/logs dist/prebuilt/"$KVER" dist/kernel-bundles
+                  status=0
+                  make KERNEL_SRC="${{ steps.kernel.outputs.kdir }}" 2>&1 | tee "dist/logs/${{ matrix.target.name }}.log" || status=$?
+                  echo "status=$status" >> "$GITHUB_OUTPUT"
+                  if [ "$status" -eq 0 ]; then
+                    make -C test all
+                    cp binder/binder_linux.ko "dist/prebuilt/$KVER/binder_linux.ko"
+                    cp ashmem/ashmem_linux.ko "dist/prebuilt/$KVER/ashmem_linux.ko"
+                    cp test/test_ipc "dist/prebuilt/$KVER/test_ipc"
+                    cp VERSION "dist/prebuilt/$KVER/VERSION"
+                    printf '%s\n' "$KVER" > "dist/prebuilt/$KVER/KERNEL"
+                    sha256sum "dist/prebuilt/$KVER/"* > "dist/prebuilt/$KVER/SHA256SUMS"
+                    tar -czf "dist/kernel-bundles/redroid-modules-${VERSION}-${KVER}.tar.gz" -C "dist/prebuilt/$KVER" binder_linux.ko ashmem_linux.ko KERNEL VERSION SHA256SUMS
+                  fi
+
+            - name: Run CI validation for successful builds
+              if: steps.build.outputs.status == '0'
+              shell: bash
+              run: |
+                  set -euo pipefail
+                  make ci-check
+                  make ci-test || true
+
+            - name: Upload kernel rebuild artifacts
+              if: always()
+              uses: actions/upload-artifact@v4
+              with:
+                  name: kernel-rebuild-${{ matrix.target.name }}-${{ steps.kernel.outputs.kver }}
+                  path: |
+                      dist/logs/${{ matrix.target.name }}.log
+                      dist/prebuilt/${{ steps.kernel.outputs.kver }}/
+                      dist/kernel-bundles/*.tar.gz
+                  if-no-files-found: warn
+
+            - name: Fail job if the kernel build failed
+              if: steps.build.outputs.status != '0'
+              shell: bash
+              run: |
+                  echo "Kernel build failed for ${{ matrix.target.name }}" >&2
+                  exit 1
+
+    publish-prerelease:
+        name: publish-kernel-preview
+        needs: [discover, build-kernels]
+        if: needs.discover.outputs.has_targets == 'true' && needs.build-kernels.result == 'success' && (github.event.inputs.publish_prerelease == 'true' || github.event_name == 'schedule')
+        runs-on: ubuntu-latest
+
+        steps:
+            - name: Install CA certificates
+              shell: bash
+              run: |
+                  set -euo pipefail
+                  sudo apt-get update
+                  sudo apt-get install -y --no-install-recommends ca-certificates git curl wget
+                  sudo update-ca-certificates || true
+
+            - name: Check out repository
+              uses: actions/checkout@v4
+              with:
+                  fetch-depth: 0
+                  ref: ${{ needs.discover.outputs.build_ref }}
+
+            - name: Download kernel rebuild artifacts
+              uses: actions/download-artifact@v4
+              with:
+                  path: artifacts
+                  pattern: kernel-rebuild-*
+                  merge-multiple: false
+
+            - name: Rehydrate prerelease payload
+              shell: bash
+              run: |
+                  set -euo pipefail
+                  mkdir -p dist/prebuilt dist/kernel-bundles dist/github-release
+                  for artifact_dir in artifacts/*; do
+                    [ -d "$artifact_dir" ] || continue
+                    find "$artifact_dir" -mindepth 1 -maxdepth 2 -type d -name '*' >/dev/null 2>&1 || true
+                    if [ -d "$artifact_dir/dist/prebuilt" ]; then
+                      cp -a "$artifact_dir/dist/prebuilt"/. dist/prebuilt/
+                    fi
+                    if [ -d "$artifact_dir/dist/kernel-bundles" ]; then
+                      cp -a "$artifact_dir/dist/kernel-bundles"/. dist/kernel-bundles/
+                    fi
+                    find "$artifact_dir" -type f -name '*.log' -exec cp {} dist/github-release/ \;
+                  done
+
+            - name: Build prerelease installer
+              shell: bash
+              run: |
+                  set -euo pipefail
+                  chmod +x scripts/build-release-bundle.sh
+                  scripts/build-release-bundle.sh --version "${{ needs.discover.outputs.version }}" --prebuilt-root "$(pwd)/dist/prebuilt" --output-dir "$(pwd)/dist"
+                  cp dist/kernel-bundles/*.tar.gz dist/github-release/ 2>/dev/null || true
+                  for kdir in dist/prebuilt/*; do
+                    [ -d "$kdir" ] || continue
+                    kver="$(basename "$kdir")"
+                    cp "$kdir/binder_linux.ko" "dist/github-release/binder_linux-${kver}.ko"
+                    cp "$kdir/ashmem_linux.ko" "dist/github-release/ashmem_linux-${kver}.ko"
+                  done
+
+            - name: Publish kernel preview prerelease
+              uses: softprops/action-gh-release@v2
+              with:
+                  tag_name: kernel-preview
+                  name: Kernel Preview
+                  prerelease: true
+                  generate_release_notes: false
+                  body: |
+                      Automatic preview rebuild from `${{ needs.discover.outputs.build_ref }}`.
+
+                      Repo version: `${{ needs.discover.outputs.version }}`
+
+                      Kernel discovery report:
+                      ```text
+                      ${{ needs.discover.outputs.report }}
+                      ```
+                  files: |
+                      dist/*.run
+                      dist/github-release/*
+                      dist/release-layout.txt

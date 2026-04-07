@@ -3,4 +3,4 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-exec "$SCRIPT_DIR/detect-ipc-runtime.sh" --strict "$@"
+exec bash "$SCRIPT_DIR/detect-ipc-runtime.sh" --strict "$@"

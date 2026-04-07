@@ -1,0 +1,111 @@
+name: Kernel Autopatch Request
+
+on:
+    workflow_run:
+        workflows: ["Kernel Triggered Rebuild"]
+        types: [completed]
+    workflow_dispatch:
+        inputs:
+            run_id:
+                description: "Workflow run ID from Kernel Triggered Rebuild"
+                required: true
+                type: string
+
+permissions:
+    contents: write
+    issues: write
+    pull-requests: write
+
+jobs:
+    autopatch:
+        if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'failure'
+        runs-on: ubuntu-latest
+
+        steps:
+            - name: Check out repository
+              uses: actions/checkout@v4
+              with:
+                  fetch-depth: 0
+
+            - name: Resolve source run id
+              id: source
+              shell: bash
+              run: |
+                  set -euo pipefail
+                  if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+                    echo "run_id=${{ inputs.run_id }}" >> "$GITHUB_OUTPUT"
+                  else
+                    echo "run_id=${{ github.event.workflow_run.id }}" >> "$GITHUB_OUTPUT"
+                  fi
+
+            - name: Download kernel rebuild artifacts
+              uses: dawidd6/action-download-artifact@v6
+              with:
+                  github_token: ${{ secrets.GITHUB_TOKEN }}
+                  run_id: ${{ steps.source.outputs.run_id }}
+                  workflow_conclusion: failure
+                  name_is_regexp: true
+                  name: kernel-rebuild-.*
+                  path: artifacts
+                  if_no_artifact_found: warn
+
+            - name: Generate autopatch request body
+              id: prompt
+              shell: bash
+              run: |
+                  set -euo pipefail
+                  mkdir -p .github/autopatch
+                  chmod +x scripts/read-version.sh scripts/prepare-kernel-autopatch.sh
+                  BODY_PATH=".github/autopatch/kernel-regression-${{ steps.source.outputs.run_id }}.md"
+                  sh ./scripts/prepare-kernel-autopatch.sh artifacts "$BODY_PATH"
+                  echo "body_path=$BODY_PATH" >> "$GITHUB_OUTPUT"
+
+            - name: Create or update kernel regression issue
+              uses: actions/github-script@v7
+              env:
+                  RUN_ID: ${{ steps.source.outputs.run_id }}
+                  BODY_PATH: ${{ steps.prompt.outputs.body_path }}
+              with:
+                  script: |
+                      const fs = require('fs');
+                      const body = fs.readFileSync(process.env.BODY_PATH, 'utf8');
+                      const title = `Kernel autopatch request (run ${process.env.RUN_ID})`;
+                      const issues = await github.rest.issues.listForRepo({
+                        owner: context.repo.owner,
+                        repo: context.repo.repo,
+                        state: 'open',
+                        labels: 'kernel-regression',
+                        per_page: 20,
+                      });
+                      const existing = issues.data.find(issue => issue.title === title);
+                      if (existing) {
+                        await github.rest.issues.createComment({
+                          owner: context.repo.owner,
+                          repo: context.repo.repo,
+                          issue_number: existing.number,
+                          body,
+                        });
+                      } else {
+                        await github.rest.issues.create({
+                          owner: context.repo.owner,
+                          repo: context.repo.repo,
+                          title,
+                          body,
+                          labels: ['kernel-regression', 'copilot', 'prerelease'],
+                        });
+                      }
+
+            - name: Stage request on prerelease branch
+              uses: peter-evans/create-pull-request@v6
+              with:
+                  token: ${{ secrets.GITHUB_TOKEN }}
+                  branch: prerelease
+                  base: main
+                  commit-message: "chore: stage kernel autopatch request for run ${{ steps.source.outputs.run_id }}"
+                  title: "chore: kernel autopatch request (run ${{ steps.source.outputs.run_id }})"
+                  body-path: ${{ steps.prompt.outputs.body_path }}
+                  labels: |
+                      kernel-regression
+                      copilot
+                      prerelease
+                  draft: true

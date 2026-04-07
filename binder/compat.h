@@ -101,7 +101,7 @@ extern void zap_page_range(struct vm_area_struct *, unsigned long, unsigned long
     zap_page_range(vma, addr, size)
 #endif
 
-#define COMPAT_LRU_CB_ARGS                            \
+#define COMPAT_LRU_CB_ARGS \
     struct list_head *item, struct list_lru_one *lru, void *cb_arg
 #define COMPAT_LRU_CB_EXTRA_PARAMS spinlock_t *lock,
 #define compat_lru_unlock() /* no-op in portability mode */
@@ -239,8 +239,14 @@ static inline void compat_task_getsecid(struct task_struct *task, u32 *secid)
 #define compat_vm_flags_set(vma, flags) vm_flags_set(vma, flags)
 #define compat_vm_flags_clear(vma, flags) vm_flags_clear(vma, flags)
 #else
-#define compat_vm_flags_set(vma, flags) do { } while (0)
-#define compat_vm_flags_clear(vma, flags) do { } while (0)
+#define compat_vm_flags_set(vma, flags) \
+    do                                  \
+    {                                   \
+    } while (0)
+#define compat_vm_flags_clear(vma, flags) \
+    do                                    \
+    {                                     \
+    } while (0)
 #endif
 
 /* ------------------------------------------------------------------ */

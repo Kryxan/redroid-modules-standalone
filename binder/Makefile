@@ -1,17 +1,19 @@
 # Out-of-tree: define BINDERFS and default binder device list.
 # Uses _HACKED suffix to avoid conflict with in-tree CONFIG_ANDROID_BINDER_DEVICES.
-ccflags-y = -I$(src) -DCONFIG_ANDROID_BINDERFS -DCONFIG_ANDROID_BINDER_DEVICES_HACKED="\"binder,hwbinder,vndbinder\""
+REPO_VERSION_FILE ?= $(CURDIR)/../VERSION
+MODULE_VERSION := $(shell cat $(REPO_VERSION_FILE))
+ccflags-y = -I$(src) -DCONFIG_ANDROID_BINDERFS -DCONFIG_ANDROID_BINDER_DEVICES_HACKED="\"binder,hwbinder,vndbinder\"" -DREDROID_MODULE_VERSION="\"$(MODULE_VERSION)\""
 obj-m := binder_linux.o
 binder_linux-y := binderfs.o binder.o binder_alloc.o idr.o deps.o
 
 MODULE_NAME := binder_linux
 MODULE_FILE := $(MODULE_NAME).ko
 DKMS_PACKAGE_NAME := redroid-binder
-DKMS_PACKAGE_VERSION := 2.0.0
+DKMS_PACKAGE_VERSION := $(MODULE_VERSION)
 RUNNING_KERNEL := $(shell uname -r)
 KERNEL_RELEASE ?= $(if $(KERNEL_SRC),$(notdir $(patsubst %/build,%,$(KERNEL_SRC))),$(RUNNING_KERNEL))
 KDIR ?= $(if $(KERNEL_SRC),$(KERNEL_SRC),/lib/modules/$(KERNEL_RELEASE)/build)
-INSTALL_DIR ?= /lib/modules/$(KERNEL_RELEASE)/extra
+INSTALL_DIR ?= /lib/modules/$(KERNEL_RELEASE)/updates/dkms
 DEPMOD ?= depmod
 MODPROBE ?= modprobe
 RMMOD ?= rmmod
@@ -84,6 +86,7 @@ clean-modules:
 	@echo "Removed stale $(MODULE_FILE) from $(INSTALL_DIR)"
 
 dkms-install:
+	@sed -i -E 's/^PACKAGE_VERSION=.*/PACKAGE_VERSION="$(MODULE_VERSION)"/' dkms.conf
 	dkms add $(CURDIR) >/dev/null 2>&1 || true
 	dkms build -m $(DKMS_PACKAGE_NAME) -v $(DKMS_PACKAGE_VERSION) -k $(KERNEL_RELEASE)
 	dkms install -m $(DKMS_PACKAGE_NAME) -v $(DKMS_PACKAGE_VERSION) -k $(KERNEL_RELEASE) --force
@@ -100,7 +103,7 @@ verify:
 	@if [ -d "$(KDIR)" ]; then echo "Headers:         found"; else echo "Headers:         MISSING"; fi
 	@if [ -f "$(INSTALL_DIR)/$(MODULE_FILE)" ]; then \
 		echo "Installed:       $(INSTALL_DIR)/$(MODULE_FILE)"; \
-		modinfo $(INSTALL_DIR)/$(MODULE_FILE) 2>/dev/null | grep -E '^(vermagic|srcversion)' || true; \
+		modinfo $(INSTALL_DIR)/$(MODULE_FILE) 2>/dev/null | grep -E '^(version|vermagic|srcversion)' || true; \
 	else \
 		echo "Installed:       not found"; \
 	fi

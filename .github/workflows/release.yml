@@ -1,0 +1,311 @@
+name: Release
+
+on:
+    push:
+        tags:
+            - "v*"
+    workflow_dispatch:
+        inputs:
+            publish_release:
+                description: "Publish the GitHub Release after building artifacts"
+                required: false
+                default: true
+                type: boolean
+
+permissions:
+    contents: write
+
+env:
+    DEBIAN_FRONTEND: noninteractive
+    BUNDLE_NAME: redroid-modules-standalone
+
+jobs:
+    validate-version:
+        name: validate-version
+        runs-on: ubuntu-latest
+        outputs:
+            version: ${{ steps.version.outputs.value }}
+            tag: ${{ steps.version.outputs.tag }}
+
+        steps:
+            - name: Check out repository
+              uses: actions/checkout@v4
+              with:
+                  fetch-depth: 0
+
+            - name: Read VERSION and validate tag
+              id: version
+              shell: bash
+              run: |
+                  set -euo pipefail
+                  chmod +x scripts/read-version.sh scripts/validate-version.sh
+                  VERSION="$(sh ./scripts/read-version.sh)"
+                  TAG="v${VERSION}"
+                  if [ "${GITHUB_REF_TYPE:-}" = "tag" ]; then
+                    sh ./scripts/validate-version.sh "${GITHUB_REF_NAME}"
+                  fi
+                  echo "value=$VERSION" >> "$GITHUB_OUTPUT"
+                  echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+    build-prebuilt:
+        name: build-${{ matrix.target.name }}
+        needs: validate-version
+        runs-on: ubuntu-latest
+        container:
+            image: ${{ matrix.target.image }}
+        strategy:
+            fail-fast: false
+            matrix:
+                target:
+                    - name: ubuntu-24.04
+                      image: ubuntu:24.04
+                      apt_repo: ""
+                      headers_pkg: linux-headers-generic
+                      fallback_headers_pkg: linux-headers-cloud-amd64
+                      headers_urls: ""
+                    - name: debian-12-amd64
+                      image: debian:12
+                      apt_repo: ""
+                      headers_pkg: linux-headers-amd64
+                      fallback_headers_pkg: linux-headers-cloud-amd64
+                      headers_urls: ""
+                    - name: debian-13-amd64
+                      image: debian:trixie
+                      apt_repo: ""
+                      headers_pkg: linux-headers-amd64
+                      fallback_headers_pkg: linux-headers-cloud-amd64
+                      headers_urls: ""
+                    - name: proxmox-8-pve
+                      image: debian:12
+                      apt_repo: deb [trusted=yes] http://download.proxmox.com/debian/pve bookworm pve-no-subscription
+                      headers_pkg: pve-headers
+                      fallback_headers_pkg: proxmox-headers
+                      headers_urls: ""
+                    - name: proxmox-9-pve
+                      image: debian:trixie
+                      apt_repo: deb [trusted=yes] http://download.proxmox.com/debian/pve trixie pve-no-subscription
+                      headers_pkg: pve-headers
+                      fallback_headers_pkg: proxmox-headers
+                      headers_urls: ""
+
+        steps:
+            - name: Bootstrap CA certificates and base tools
+              shell: bash
+              run: |
+                  set -euo pipefail
+                  if [ -n "${{ matrix.target.apt_repo }}" ]; then
+                    printf '%s\n' "${{ matrix.target.apt_repo }}" > /etc/apt/sources.list.d/redroid-extra.list
+                  fi
+                  apt-get update
+                  apt-get install -y --no-install-recommends ca-certificates git curl wget xz-utils
+                  update-ca-certificates || true
+
+            - name: Check out repository
+              uses: actions/checkout@v4
+              with:
+                  fetch-depth: 0
+
+            - name: Validate repo version
+              shell: bash
+              run: |
+                  set -euo pipefail
+                  chmod +x scripts/read-version.sh scripts/validate-version.sh
+                  VERSION="$(sh ./scripts/validate-version.sh)"
+                  if [ "$VERSION" != "${{ needs.validate-version.outputs.version }}" ]; then
+                    echo "::error::VERSION drift detected during matrix build"
+                    exit 1
+                  fi
+
+            - name: Install build dependencies and kernel headers
+              shell: bash
+              env:
+                  HEADERS_PKG: ${{ matrix.target.headers_pkg }}
+                  FALLBACK_HEADERS_PKG: ${{ matrix.target.fallback_headers_pkg }}
+                  HEADERS_URLS: ${{ matrix.target.headers_urls }}
+              run: |
+                  set -euo pipefail
+
+                  install_headers() {
+                    if apt-get install -y --no-install-recommends "$HEADERS_PKG"; then
+                      return 0
+                    fi
+                    if [ -n "$HEADERS_URLS" ]; then
+                      mkdir -p /tmp/redroid-header-debs
+                      for url in $HEADERS_URLS; do
+                        file="/tmp/redroid-header-debs/$(basename "$url")"
+                        curl -fsSL "$url" -o "$file"
+                      done
+                      dpkg -i /tmp/redroid-header-debs/*.deb || apt-get -f install -y
+                      return 0
+                    fi
+                    if [ -n "$FALLBACK_HEADERS_PKG" ]; then
+                      apt-get install -y --no-install-recommends "$FALLBACK_HEADERS_PKG"
+                      return 0
+                    fi
+                    return 1
+                  }
+
+                  apt-get update
+                  apt-get install -y --no-install-recommends build-essential clang kmod dkms python3 util-linux libelf-dev bc make
+                  install_headers
+
+            - name: Detect target kernel headers
+              id: kernel
+              shell: bash
+              run: |
+                  set -euo pipefail
+                  KDIR="$(find /lib/modules -mindepth 2 -maxdepth 2 -type d -name build 2>/dev/null | sort -V | tail -n 1 || true)"
+                  if [ -z "$KDIR" ]; then
+                    KDIR="$(find /usr/src -maxdepth 1 -type d \( -name 'linux-headers-*' -o -name 'pve-headers-*' -o -name 'proxmox-headers-*' \) 2>/dev/null | sort -V | tail -n 1 || true)"
+                  fi
+                  if [ -z "$KDIR" ] || [ ! -f "$KDIR/Makefile" ]; then
+                    echo "::error::Unable to locate a usable kernel headers tree"
+                    ls -la /lib/modules || true
+                    ls -la /usr/src || true
+                    exit 1
+                  fi
+                  case "$(basename "$KDIR")" in
+                    build)
+                      KVER="$(basename "$(dirname "$KDIR")")"
+                      ;;
+                    *)
+                      KVER="$(basename "$KDIR" | sed 's/^[^0-9]*//')"
+                      ;;
+                  esac
+                  echo "kdir=$KDIR" >> "$GITHUB_OUTPUT"
+                  echo "kver=$KVER" >> "$GITHUB_OUTPUT"
+
+            - name: Build binder_linux and ashmem_linux
+              shell: bash
+              run: |
+                  set -euo pipefail
+                  make KERNEL_SRC="${{ steps.kernel.outputs.kdir }}"
+                  modinfo binder/binder_linux.ko | grep -E '^(version|vermagic):'
+                  modinfo ashmem/ashmem_linux.ko | grep -E '^(version|vermagic):'
+
+            - name: Build and validate userspace tests
+              shell: bash
+              run: |
+                  set -euo pipefail
+                  make -C test all
+                  make ci-check
+                  make ci-test || true
+
+            - name: Stage per-kernel prebuilt bundle
+              shell: bash
+              run: |
+                  set -euo pipefail
+                  VERSION="${{ needs.validate-version.outputs.version }}"
+                  KVER="${{ steps.kernel.outputs.kver }}"
+                  mkdir -p "dist/prebuilt/$KVER" dist/kernel-bundles
+                  cp binder/binder_linux.ko "dist/prebuilt/$KVER/binder_linux.ko"
+                  cp ashmem/ashmem_linux.ko "dist/prebuilt/$KVER/ashmem_linux.ko"
+                  cp test/test_ipc "dist/prebuilt/$KVER/test_ipc"
+                  cp VERSION "dist/prebuilt/$KVER/VERSION"
+                  printf '%s\n' "$KVER" > "dist/prebuilt/$KVER/KERNEL"
+                  sha256sum "dist/prebuilt/$KVER/"* > "dist/prebuilt/$KVER/SHA256SUMS"
+                  tar -czf "dist/kernel-bundles/redroid-modules-${VERSION}-${KVER}.tar.gz" -C "dist/prebuilt/$KVER" binder_linux.ko ashmem_linux.ko KERNEL VERSION SHA256SUMS
+
+            - name: Upload prebuilt artifact
+              uses: actions/upload-artifact@v4
+              with:
+                  name: prebuilt-${{ steps.kernel.outputs.kver }}
+                  path: |
+                      dist/prebuilt/${{ steps.kernel.outputs.kver }}
+                      dist/kernel-bundles/*.tar.gz
+                  if-no-files-found: error
+
+    package-release:
+        name: package-release
+        needs: [validate-version, build-prebuilt]
+        runs-on: ubuntu-latest
+
+        steps:
+            - name: Ensure CA certificates are installed
+              shell: bash
+              run: |
+                  set -euo pipefail
+                  sudo apt-get update
+                  sudo apt-get install -y --no-install-recommends ca-certificates git curl wget
+                  sudo update-ca-certificates || true
+
+            - name: Check out repository
+              uses: actions/checkout@v4
+              with:
+                  fetch-depth: 0
+
+            - name: Download prebuilt artifacts
+              uses: actions/download-artifact@v4
+              with:
+                  path: artifacts
+                  pattern: prebuilt-*
+                  merge-multiple: false
+
+            - name: Rehydrate prebuilt tree
+              shell: bash
+              run: |
+                  set -euo pipefail
+                  mkdir -p dist/prebuilt dist/kernel-bundles dist/github-release
+                  found=0
+                  for artifact_dir in artifacts/*; do
+                    [ -d "$artifact_dir" ] || continue
+                    artifact_name="$(basename "$artifact_dir")"
+                    kver="${artifact_name#prebuilt-}"
+                    src_dir="$artifact_dir"
+                    if [ -d "$artifact_dir/$kver" ]; then
+                      src_dir="$artifact_dir/$kver"
+                    elif [ -d "$artifact_dir/dist/prebuilt/$kver" ]; then
+                      src_dir="$artifact_dir/dist/prebuilt/$kver"
+                    fi
+                    mkdir -p "dist/prebuilt/$kver"
+                    cp -a "$src_dir"/. "dist/prebuilt/$kver/"
+                    if [ -d "$artifact_dir/dist/kernel-bundles" ]; then
+                      cp -a "$artifact_dir/dist/kernel-bundles"/. dist/kernel-bundles/
+                    fi
+                    found=1
+                  done
+                  if [ "$found" -ne 1 ]; then
+                    echo "::error::No prebuilt artifacts were downloaded"
+                    exit 1
+                  fi
+
+            - name: Build self-extracting .run installer
+              shell: bash
+              run: |
+                  set -euo pipefail
+                  chmod +x scripts/build-release-bundle.sh
+                  scripts/build-release-bundle.sh --version "${{ needs.validate-version.outputs.version }}" --prebuilt-root "$(pwd)/dist/prebuilt" --output-dir "$(pwd)/dist"
+
+            - name: Prepare GitHub Release assets
+              shell: bash
+              run: |
+                  set -euo pipefail
+                  cp dist/kernel-bundles/*.tar.gz dist/github-release/ 2>/dev/null || true
+                  for kdir in dist/prebuilt/*; do
+                    [ -d "$kdir" ] || continue
+                    kver="$(basename "$kdir")"
+                    cp "$kdir/binder_linux.ko" "dist/github-release/binder_linux-${kver}.ko"
+                    cp "$kdir/ashmem_linux.ko" "dist/github-release/ashmem_linux-${kver}.ko"
+                    cp "$kdir/SHA256SUMS" "dist/github-release/SHA256SUMS-${kver}.txt"
+                  done
+
+            - name: Upload packaged release artifacts
+              uses: actions/upload-artifact@v4
+              with:
+                  name: release-${{ needs.validate-version.outputs.version }}
+                  path: |
+                      dist/*.run
+                      dist/github-release/*
+                      dist/release-layout.txt
+                  if-no-files-found: error
+
+            - name: Publish GitHub Release
+              if: startsWith(github.ref, 'refs/tags/v') || github.event.inputs.publish_release == 'true'
+              uses: softprops/action-gh-release@v2
+              with:
+                  tag_name: ${{ needs.validate-version.outputs.tag }}
+                  name: redroid-modules ${{ needs.validate-version.outputs.version }}
+                  generate_release_notes: true
+                  files: |
+                      dist/*.run
+                      dist/github-release/*

@@ -65,7 +65,10 @@ static inline void vma_set_anonymous(struct vm_area_struct *vma)
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 3, 0)
 #define compat_vm_flags_clear(vma, flags) vm_flags_clear(vma, flags)
 #else
-#define compat_vm_flags_clear(vma, flags) do { } while (0)
+#define compat_vm_flags_clear(vma, flags) \
+    do                                    \
+    {                                     \
+    } while (0)
 #endif
 
 #endif /* _ASHMEM_COMPAT_H */

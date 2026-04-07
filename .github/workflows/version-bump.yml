@@ -1,0 +1,68 @@
+name: Version Bump
+
+on:
+    workflow_dispatch:
+        inputs:
+            part:
+                description: "Semantic version field to increment"
+                required: true
+                default: patch
+                type: choice
+                options:
+                    - patch
+                    - minor
+                    - major
+
+permissions:
+    contents: write
+
+jobs:
+    bump:
+        name: bump-${{ inputs.part }}
+        runs-on: ubuntu-latest
+
+        steps:
+            - name: Check out repository
+              uses: actions/checkout@v4
+              with:
+                  fetch-depth: 0
+                  token: ${{ secrets.GITHUB_TOKEN }}
+
+            - name: Configure git identity
+              shell: bash
+              run: |
+                  set -euo pipefail
+                  git config user.name "github-actions[bot]"
+                  git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+            - name: Bump VERSION
+              id: bump
+              shell: bash
+              env:
+                  PART: ${{ inputs.part }}
+              run: |
+                  set -euo pipefail
+                  chmod +x scripts/read-version.sh scripts/bump-version.sh
+                  OLD_VERSION="$(sh ./scripts/read-version.sh)"
+                  NEW_VERSION="$(sh ./scripts/bump-version.sh "$PART")"
+                  if [ "$OLD_VERSION" = "$NEW_VERSION" ]; then
+                    echo "::error::Version did not change"
+                    exit 1
+                  fi
+                  echo "old_version=$OLD_VERSION" >> "$GITHUB_OUTPUT"
+                  echo "new_version=$NEW_VERSION" >> "$GITHUB_OUTPUT"
+
+            - name: Commit VERSION update
+              shell: bash
+              run: |
+                  set -euo pipefail
+                  git add VERSION
+                  git commit -m "chore: bump version to v${{ steps.bump.outputs.new_version }}"
+
+            - name: Create and push release tag
+              shell: bash
+              run: |
+                  set -euo pipefail
+                  git tag "v${{ steps.bump.outputs.new_version }}"
+                  git push origin HEAD:${GITHUB_REF_NAME}
+                  git push origin "v${{ steps.bump.outputs.new_version }}"

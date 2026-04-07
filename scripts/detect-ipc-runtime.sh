@@ -72,14 +72,31 @@ if [ ${#binder_mount_points[@]} -gt 0 ]; then
   binderfs_auto_mount_paths="$(IFS=','; echo "${binder_mount_points[*]}")"
 fi
 
+record_binder_device() {
+  local dev="$1"
+  [ -c "$dev" ] || return 0
+
+  case ";$binder_devices_present;" in
+    *";$dev;"*)
+      ;;
+    *)
+      if [ -n "$binder_devices_present" ]; then
+        binder_devices_present+=";"
+      fi
+      binder_devices_present+="$dev"
+      binder_device_available=1
+      ;;
+  esac
+}
+
 for dev in /dev/binder /dev/hwbinder /dev/vndbinder; do
-  if [ -c "$dev" ]; then
-    if [ -n "$binder_devices_present" ]; then
-      binder_devices_present+=";"
-    fi
-    binder_devices_present+="$dev"
-    binder_device_available=1
-  fi
+  record_binder_device "$dev"
+done
+
+for mount_point in "${binder_mount_points[@]}"; do
+  for name in binder hwbinder vndbinder; do
+    record_binder_device "$mount_point/$name"
+  done
 done
 
 if [ "$binderfs_supported" = "1" ]; then
@@ -109,6 +126,17 @@ for dev in /dev/binder /dev/hwbinder /dev/vndbinder; do
     break
   fi
 done
+
+if [ -z "$selected_binder_dev" ]; then
+  for mount_point in "${binder_mount_points[@]}"; do
+    for dev in "$mount_point/binder" "$mount_point/hwbinder" "$mount_point/vndbinder"; do
+      if [ -c "$dev" ]; then
+        selected_binder_dev="$dev"
+        break 2
+      fi
+    done
+  done
+fi
 
 if [ -n "$selected_binder_dev" ]; then
   ioctl_result="$(python3 - "$selected_binder_dev" <<'PY'

@@ -31,6 +31,10 @@
 #include "compat.h"
 #include "deps.h"
 
+#ifndef REDROID_MODULE_VERSION
+#define REDROID_MODULE_VERSION "0.0.0"
+#endif
+
 #define ASHMEM_NAME_PREFIX "dev/ashmem/"
 #define ASHMEM_NAME_PREFIX_LEN (sizeof(ASHMEM_NAME_PREFIX) - 1)
 #define ASHMEM_FULL_NAME_LEN (ASHMEM_NAME_LEN + ASHMEM_NAME_PREFIX_LEN)
@@ -1226,3 +1230,4 @@ module_exit(ashmem_exit);
 // device_initcall(ashmem_init);
 MODULE_DESCRIPTION("Android ashmem shared memory driver");
 MODULE_LICENSE("GPL v2");
+MODULE_VERSION(REDROID_MODULE_VERSION);
