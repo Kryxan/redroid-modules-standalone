@@ -246,26 +246,27 @@ jobs:
               run: |
                   set -euo pipefail
                   mkdir -p dist/prebuilt dist/kernel-bundles dist/github-release
+
+                  find artifacts -type f -path '*/dist/kernel-bundles/*.tar.gz' -exec cp {} dist/kernel-bundles/ \;
+
                   found=0
-                  for artifact_dir in artifacts/*; do
-                    [ -d "$artifact_dir" ] || continue
-                    artifact_name="$(basename "$artifact_dir")"
-                    kver="${artifact_name#prebuilt-}"
-                    src_dir="$artifact_dir"
-                    if [ -d "$artifact_dir/$kver" ]; then
-                      src_dir="$artifact_dir/$kver"
-                    elif [ -d "$artifact_dir/dist/prebuilt/$kver" ]; then
-                      src_dir="$artifact_dir/dist/prebuilt/$kver"
-                    fi
+                  while IFS= read -r binder_file; do
+                    src_dir="$(dirname "$binder_file")"
+                    kver="$(basename "$src_dir")"
                     mkdir -p "dist/prebuilt/$kver"
-                    cp -a "$src_dir"/. "dist/prebuilt/$kver/"
-                    if [ -d "$artifact_dir/dist/kernel-bundles" ]; then
-                      cp -a "$artifact_dir/dist/kernel-bundles"/. dist/kernel-bundles/
-                    fi
+                    cp "$src_dir/binder_linux.ko" "dist/prebuilt/$kver/binder_linux.ko"
+                    cp "$src_dir/ashmem_linux.ko" "dist/prebuilt/$kver/ashmem_linux.ko"
+                    for extra in test_ipc VERSION KERNEL SHA256SUMS; do
+                      if [ -f "$src_dir/$extra" ]; then
+                        cp "$src_dir/$extra" "dist/prebuilt/$kver/$extra"
+                      fi
+                    done
                     found=1
-                  done
+                  done < <(find artifacts -type f -name 'binder_linux.ko' | sort)
+
                   if [ "$found" -ne 1 ]; then
                     echo "::error::No prebuilt artifacts were downloaded"
+                    find artifacts -maxdepth 4 -type f | sort || true
                     exit 1
                   fi
 
