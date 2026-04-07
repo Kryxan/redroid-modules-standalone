@@ -156,7 +156,7 @@ jobs:
                   set -euo pipefail
                   KDIR="$(find /lib/modules -mindepth 2 -maxdepth 2 -type d -name build 2>/dev/null | sort -V | tail -n 1 || true)"
                   if [ -z "$KDIR" ]; then
-                    KDIR="$(find /usr/src -maxdepth 1 -type d \( -name 'linux-headers-*' -o -name 'pve-headers-*' -o -name 'proxmox-headers-*' \) 2>/dev/null | sort -V | tail -n 1 || true)"
+                    KDIR="$(find /usr/src -maxdepth 1 -type d \( -name 'linux-headers-*' -o -name 'pve-headers-*' -o -name 'proxmox-headers-*' \) ! -name '*-common' ! -name '*-common-*' 2>/dev/null | sort -V | tail -n 1 || true)"
                   fi
                   if [ -z "$KDIR" ] || [ ! -f "$KDIR/Makefile" ]; then
                     echo "::error::Unable to locate a usable kernel headers tree"
