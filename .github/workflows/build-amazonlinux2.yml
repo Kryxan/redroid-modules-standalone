@@ -17,94 +17,114 @@ jobs:
     name: amazonlinux-2-kernel-4.14-dkms
     runs-on: ubuntu-latest
     env:
-      ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: "true"
-    container:
-      image: amazonlinux:2
+      CONTAINER_IMAGE: amazonlinux:2
+      CONTAINER_NAME: amazonlinux2-dkms-${{ github.run_id }}-${{ github.run_attempt }}
 
     steps:
-      - name: Bootstrap container tools
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p dist/logs dist/modules
-          echo "Installing bootstrap tools for Amazon Linux 2" | tee dist/logs/bootstrap.log
-          yum -y update
-          yum -y install git tar gzip
-
       - name: Check out repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
-      - name: Install dependencies and kernel headers
-        id: deps
+      - name: Start Amazon Linux 2 build container
         shell: bash
         run: |
           set -euo pipefail
-          KREL="$(uname -r)"
           mkdir -p dist/logs dist/modules
-          echo "Detected running kernel: ${KREL}" | tee dist/logs/kernel-detect.log
+          docker pull "$CONTAINER_IMAGE"
+          docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
+          docker run -d --name "$CONTAINER_NAME" -v "$PWD":/workspace -w /workspace "$CONTAINER_IMAGE" tail -f /dev/null
+          docker exec "$CONTAINER_NAME" bash -lc 'mkdir -p dist/logs dist/modules'
 
-          yum -y install \
-            gcc \
-            make \
-            git \
-            dkms \
-            kmod \
-            elfutils-libelf-devel \
-            findutils \
-            which \
-            tar \
-            gzip \
-            sed
+      - name: Install dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker exec "$CONTAINER_NAME" bash -lc '
+            set -euo pipefail
+            yum -y update
+            yum -y install \
+              gcc \
+              make \
+              git \
+              dkms \
+              kmod \
+              elfutils-libelf-devel \
+              findutils \
+              which \
+              tar \
+              gzip \
+              sed
+          '
 
-          if yum -y install "kernel-devel-${KREL}" "kernel-headers-${KREL}"; then
-            echo "matched_kernel=${KREL}" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
+      - name: Install kernel headers
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker exec "$CONTAINER_NAME" bash -lc '
+            set -euo pipefail
+            KREL="$(uname -r)"
+            echo "Detected running kernel: ${KREL}" | tee dist/logs/kernel-detect.log
 
-          echo "::warning::Exact kernel-devel/kernel-headers for ${KREL} are unavailable in the GitHub-hosted container environment; falling back to the latest Amazon Linux 2 kernel packages." | tee -a dist/logs/kernel-detect.log
+            if yum -y install "kernel-devel-${KREL}" "kernel-headers-${KREL}"; then
+              exit 0
+            fi
 
-          if ! yum -y install kernel-devel kernel-headers; then
-            echo "::error::Unable to install usable Amazon Linux 2 kernel-devel/kernel-headers packages" | tee -a dist/logs/kernel-detect.log
-            exit 1
-          fi
+            echo "::warning::Exact kernel-devel/kernel-headers for ${KREL} are unavailable in the GitHub-hosted runner; trying Amazon Linux 2 4.14 packages." | tee -a dist/logs/kernel-detect.log
+
+            if yum -y install "kernel-devel-4.14*" "kernel-headers-4.14*"; then
+              exit 0
+            fi
+
+            echo "::warning::Amazon Linux 2 4.14 headers were unavailable; falling back to the default kernel-devel/kernel-headers packages." | tee -a dist/logs/kernel-detect.log
+
+            if ! yum -y install kernel-devel kernel-headers; then
+              echo "::error::Unable to install usable Amazon Linux 2 kernel-devel/kernel-headers packages" | tee -a dist/logs/kernel-detect.log
+              exit 1
+            fi
+          '
 
       - name: Detect usable kernel headers
         id: kernel
         shell: bash
         run: |
           set -euo pipefail
-          RUNNING_KERNEL="$(uname -r)"
-          KDIR=""
-          KVER=""
+          docker exec "$CONTAINER_NAME" bash -lc '
+            set -euo pipefail
+            RUNNING_KERNEL="$(uname -r)"
+            KDIR=""
+            KVER=""
 
-          BUILD_LINK="/lib/modules/${RUNNING_KERNEL}/build"
-          if [ -L "$BUILD_LINK" ] || [ -d "$BUILD_LINK" ]; then
-            BUILD_TARGET="$(readlink -f "$BUILD_LINK" || true)"
-            if [ -n "$BUILD_TARGET" ] && [ -f "$BUILD_TARGET/Makefile" ] && [[ "$BUILD_TARGET" == /usr/src/kernels/* ]]; then
-              KDIR="$BUILD_TARGET"
-              KVER="$RUNNING_KERNEL"
+            BUILD_LINK="/lib/modules/${RUNNING_KERNEL}/build"
+            if [ -L "$BUILD_LINK" ] || [ -d "$BUILD_LINK" ]; then
+              BUILD_TARGET="$(readlink -f "$BUILD_LINK" || true)"
+              if [ -n "$BUILD_TARGET" ] && [ -f "$BUILD_TARGET/Makefile" ] && [[ "$BUILD_TARGET" == /usr/src/kernels/* ]]; then
+                KDIR="$BUILD_TARGET"
+                KVER="$RUNNING_KERNEL"
+              fi
             fi
-          fi
 
-          if [ -z "$KDIR" ]; then
-            KDIR="$(find /usr/src/kernels -maxdepth 1 -mindepth 1 -type d | sort -V | tail -n 1 || true)"
-            if [ -n "$KDIR" ]; then
-              KVER="$(basename "$KDIR")"
+            if [ -z "$KDIR" ]; then
+              KDIR="$(find /usr/src/kernels -maxdepth 1 -mindepth 1 -type d | sort -V | tail -n 1 || true)"
+              if [ -n "$KDIR" ]; then
+                KVER="$(basename "$KDIR")"
+              fi
             fi
-          fi
 
-          if [ -z "$KDIR" ] || [ ! -f "$KDIR/Makefile" ]; then
-            echo "::error::No usable Amazon Linux 2 kernel headers were found" | tee -a dist/logs/kernel-detect.log
-            ls -la /lib/modules || true
-            ls -la /usr/src || true
-            ls -la /usr/src/kernels || true
-            exit 1
-          fi
+            if [ -z "$KDIR" ] || [ ! -f "$KDIR/Makefile" ]; then
+              echo "::error::No usable Amazon Linux 2 kernel headers were found" | tee -a dist/logs/kernel-detect.log
+              ls -la /lib/modules || true
+              ls -la /usr/src || true
+              ls -la /usr/src/kernels || true
+              exit 1
+            fi
 
-          mkdir -p "/lib/modules/${KVER}"
-          ln -sfn "$KDIR" "/lib/modules/${KVER}/build"
+            mkdir -p "/lib/modules/${KVER}"
+            ln -sfn "$KDIR" "/lib/modules/${KVER}/build"
 
-          echo "Using kernel headers from ${KDIR}" | tee -a dist/logs/kernel-detect.log
+            echo "Using kernel headers from ${KDIR}" | tee -a dist/logs/kernel-detect.log
+            printf "KDIR=%s\nKVER=%s\n" "$KDIR" "$KVER" > dist/kernel.env
+          '
+
+          source dist/kernel.env
           echo "kdir=$KDIR" >> "$GITHUB_OUTPUT"
           echo "kver=$KVER" >> "$GITHUB_OUTPUT"
 
@@ -112,21 +132,24 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          VERSION="$(cat VERSION)"
-          install -m 0644 VERSION /usr/src/VERSION
+          docker exec "$CONTAINER_NAME" bash -lc '
+            set -euo pipefail
+            VERSION="$(cat VERSION)"
+            install -m 0644 VERSION /usr/src/VERSION
 
-          prepare_module() {
-            local src_dir="$1"
-            local pkg_name="$2"
-            local target="/usr/src/${pkg_name}-${VERSION}"
-            rm -rf "$target"
-            mkdir -p "$target"
-            cp -a "${src_dir}/." "$target/"
-            sed -i "s/^PACKAGE_VERSION=.*/PACKAGE_VERSION=\"${VERSION}\"/" "$target/dkms.conf"
-          }
+            prepare_module() {
+              local src_dir="$1"
+              local pkg_name="$2"
+              local target="/usr/src/${pkg_name}-${VERSION}"
+              rm -rf "$target"
+              mkdir -p "$target"
+              cp -a "${src_dir}/." "$target/"
+              sed -i "s/^PACKAGE_VERSION=.*/PACKAGE_VERSION=\"${VERSION}\"/" "$target/dkms.conf"
+            }
 
-          prepare_module binder redroid-binder
-          prepare_module ashmem redroid-ashmem
+            prepare_module binder redroid-binder
+            prepare_module ashmem redroid-ashmem
+          '
 
       - name: Run DKMS build
         shell: bash
@@ -134,16 +157,19 @@ jobs:
           KVER: ${{ steps.kernel.outputs.kver }}
         run: |
           set -euo pipefail
-          VERSION="$(cat VERSION)"
+          docker exec -e KVER="$KVER" "$CONTAINER_NAME" bash -lc '
+            set -euo pipefail
+            VERSION="$(cat VERSION)"
 
-          dkms remove -m redroid-binder -v "$VERSION" --all >/dev/null 2>&1 || true
-          dkms remove -m redroid-ashmem -v "$VERSION" --all >/dev/null 2>&1 || true
+            dkms remove -m redroid-binder -v "$VERSION" --all >/dev/null 2>&1 || true
+            dkms remove -m redroid-ashmem -v "$VERSION" --all >/dev/null 2>&1 || true
 
-          dkms add -m redroid-binder -v "$VERSION" 2>&1 | tee dist/logs/binder-dkms-add.log
-          dkms add -m redroid-ashmem -v "$VERSION" 2>&1 | tee dist/logs/ashmem-dkms-add.log
-          dkms build -m redroid-binder -v "$VERSION" -k "$KVER" 2>&1 | tee dist/logs/binder-dkms-build.log
-          dkms build -m redroid-ashmem -v "$VERSION" -k "$KVER" 2>&1 | tee dist/logs/ashmem-dkms-build.log
-          dkms status | tee dist/logs/dkms-status.log
+            dkms add -m redroid-binder -v "$VERSION" 2>&1 | tee dist/logs/binder-dkms-add.log
+            dkms add -m redroid-ashmem -v "$VERSION" 2>&1 | tee dist/logs/ashmem-dkms-add.log
+            dkms build -m redroid-binder -v "$VERSION" -k "$KVER" 2>&1 | tee dist/logs/binder-dkms-build.log
+            dkms build -m redroid-ashmem -v "$VERSION" -k "$KVER" 2>&1 | tee dist/logs/ashmem-dkms-build.log
+            dkms status | tee dist/logs/dkms-status.log
+          '
 
       - name: Verify module presence
         shell: bash
@@ -151,44 +177,52 @@ jobs:
           KVER: ${{ steps.kernel.outputs.kver }}
         run: |
           set -euo pipefail
-          VERSION="$(cat VERSION)"
-          BINDER_KO="$(find "/var/lib/dkms/redroid-binder/${VERSION}" -type f -path "*/${KVER}/*" -name 'binder_linux.ko' | sort -V | tail -n 1 || true)"
-          ASHMEM_KO="$(find "/var/lib/dkms/redroid-ashmem/${VERSION}" -type f -path "*/${KVER}/*" -name 'ashmem_linux.ko' | sort -V | tail -n 1 || true)"
+          docker exec -e KVER="$KVER" "$CONTAINER_NAME" bash -lc '
+            set -euo pipefail
+            VERSION="$(cat VERSION)"
+            BINDER_KO="$(find "/var/lib/dkms/redroid-binder/${VERSION}" -type f -path "*/${KVER}/*" -name "binder_linux.ko" | sort -V | tail -n 1 || true)"
+            ASHMEM_KO="$(find "/var/lib/dkms/redroid-ashmem/${VERSION}" -type f -path "*/${KVER}/*" -name "ashmem_linux.ko" | sort -V | tail -n 1 || true)"
 
-          if [ -z "$BINDER_KO" ] || [ ! -f "$BINDER_KO" ]; then
-            echo "::error::DKMS build did not produce binder_linux.ko" | tee -a dist/logs/dkms-status.log
-            find "/var/lib/dkms/redroid-binder/${VERSION}" -maxdepth 6 -type f | sort || true
-            exit 1
-          fi
+            if [ -z "$BINDER_KO" ] || [ ! -f "$BINDER_KO" ]; then
+              echo "::error::DKMS build did not produce binder_linux.ko" | tee -a dist/logs/dkms-status.log
+              find "/var/lib/dkms/redroid-binder/${VERSION}" -maxdepth 6 -type f | sort || true
+              exit 1
+            fi
 
-          if [ -z "$ASHMEM_KO" ] || [ ! -f "$ASHMEM_KO" ]; then
-            echo "::error::DKMS build did not produce ashmem_linux.ko" | tee -a dist/logs/dkms-status.log
-            find "/var/lib/dkms/redroid-ashmem/${VERSION}" -maxdepth 6 -type f | sort || true
-            exit 1
-          fi
+            if [ -z "$ASHMEM_KO" ] || [ ! -f "$ASHMEM_KO" ]; then
+              echo "::error::DKMS build did not produce ashmem_linux.ko" | tee -a dist/logs/dkms-status.log
+              find "/var/lib/dkms/redroid-ashmem/${VERSION}" -maxdepth 6 -type f | sort || true
+              exit 1
+            fi
 
-          modinfo "$BINDER_KO" | tee dist/logs/binder-modinfo.log
-          modinfo "$ASHMEM_KO" | tee dist/logs/ashmem-modinfo.log
+            modinfo "$BINDER_KO" | tee dist/logs/binder-modinfo.log
+            modinfo "$ASHMEM_KO" | tee dist/logs/ashmem-modinfo.log
 
-          cp "$BINDER_KO" dist/modules/binder_linux.ko
-          cp "$ASHMEM_KO" dist/modules/ashmem_linux.ko
+            cp "$BINDER_KO" dist/modules/binder_linux.ko
+            cp "$ASHMEM_KO" dist/modules/ashmem_linux.ko
 
-          find "/var/lib/dkms/redroid-binder/${VERSION}" -type f -name 'make.log' -exec cp -n {} dist/logs/ \; || true
-          find "/var/lib/dkms/redroid-ashmem/${VERSION}" -type f -name 'make.log' -exec cp -n {} dist/logs/ \; || true
+            find "/var/lib/dkms/redroid-binder/${VERSION}" -type f -name "make.log" -exec cp -n {} dist/logs/ \; || true
+            find "/var/lib/dkms/redroid-ashmem/${VERSION}" -type f -name "make.log" -exec cp -n {} dist/logs/ \; || true
 
-          ls -l dist/modules
+            ls -l dist/modules
+          '
 
       - name: Upload build logs
         if: always()
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: amazonlinux2-dkms-logs-${{ steps.kernel.outputs.kver || 'unknown' }}
           path: dist/logs/
           if-no-files-found: error
 
       - name: Upload module artifacts
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: amazonlinux2-modules-${{ steps.kernel.outputs.kver }}
           path: dist/modules/*.ko
           if-no-files-found: error
+
+      - name: Clean up container
+        if: always()
+        shell: bash
+        run: docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
