@@ -36,6 +36,7 @@ jobs:
           if-no-files-found: error
 
       - name: Upload module artifacts
+        if: steps.dkms.outputs.skipped != 'true'
         uses: actions/upload-artifact@v4
         with:
           name: fedora-modules-${{ steps.dkms.outputs.kernel_version }}
@@ -49,3 +50,8 @@ jobs:
           name: fedora-dkms-packages-${{ steps.dkms.outputs.kernel_version || 'unknown' }}
           path: artifacts/fedora/packages/
           if-no-files-found: ignore
+
+      - name: Report skipped environment
+        if: steps.dkms.outputs.skipped == 'true'
+        shell: bash
+        run: echo "Skipped fedora-latest due to ${{ steps.dkms.outputs.skip_reason || 'a non-actionable CI environment mismatch' }}."

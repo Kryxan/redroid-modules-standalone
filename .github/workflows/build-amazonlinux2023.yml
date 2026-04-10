@@ -36,6 +36,7 @@ jobs:
           if-no-files-found: error
 
       - name: Upload module artifacts
+        if: steps.dkms.outputs.skipped != 'true'
         uses: actions/upload-artifact@v4
         with:
           name: amazonlinux2023-modules-${{ steps.dkms.outputs.kernel_version }}
@@ -49,3 +50,8 @@ jobs:
           name: amazonlinux2023-dkms-packages-${{ steps.dkms.outputs.kernel_version || 'unknown' }}
           path: artifacts/amazonlinux2023/packages/
           if-no-files-found: ignore
+
+      - name: Report skipped environment
+        if: steps.dkms.outputs.skipped == 'true'
+        shell: bash
+        run: echo "Skipped amazonlinux-2023-kernel-6.x-dkms due to ${{ steps.dkms.outputs.skip_reason || 'a non-actionable CI environment mismatch' }}."

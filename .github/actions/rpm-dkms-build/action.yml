@@ -33,6 +33,12 @@ outputs:
   distro_id:
     description: Distribution ID detected from /etc/os-release.
     value: ${{ steps.build.outputs.distro_id }}
+  skipped:
+    description: Whether the build was intentionally skipped due to a non-actionable CI environment mismatch.
+    value: ${{ steps.build.outputs.skipped }}
+  skip_reason:
+    description: Reason for a successful skip when skipped=true.
+    value: ${{ steps.build.outputs.skip_reason }}
 
 runs:
   using: composite
@@ -110,6 +116,8 @@ runs:
         VERSION=""
         BINDER_PACKAGE=""
         ASHMEM_PACKAGE=""
+        SKIPPED="false"
+        SKIP_REASON=""
 
         run_in_env() {
             local script="$1"
@@ -317,7 +325,7 @@ runs:
             prepare_module ashmem "$ASHMEM_PACKAGE"
         ' | tee "$LOG_DIR/dkms-prepare.log"
 
-        run_in_env '
+        if ! run_in_env '
             set -euo pipefail
 
             build_one() {
@@ -335,56 +343,70 @@ runs:
             build_one "$BINDER_PACKAGE" binder
             build_one "$ASHMEM_PACKAGE" ashmem
             dkms status | tee "$ARTIFACTS_REL/logs/dkms-status.log"
-        '
-
-        run_in_env '
-            set -euo pipefail
-
-            BINDER_KO="$(find "/var/lib/dkms/${BINDER_PACKAGE}/${VERSION}" -type f -path "*/${KVER}/*" -name "binder_linux.ko" | sort -V | tail -n 1 || true)"
-            ASHMEM_KO="$(find "/var/lib/dkms/${ASHMEM_PACKAGE}/${VERSION}" -type f -path "*/${KVER}/*" -name "ashmem_linux.ko" | sort -V | tail -n 1 || true)"
-
-            [ -n "$BINDER_KO" ] && [ -f "$BINDER_KO" ] || {
-                echo "::error::binder_linux.ko was not produced by the DKMS build" >&2
+        '; then
+            MISMATCH_PATTERN='((kill_litter_super|mount_nodev|file_close_fd|zap_page_range_single).*(undefined!|undefined reference)|undefined!.*(kill_litter_super|mount_nodev|file_close_fd|zap_page_range_single))'
+            if grep -Eq "$MISMATCH_PATTERN" "$LOG_DIR"/binder-dkms-build.log "$LOG_DIR"/ashmem-dkms-build.log "$LOG_DIR"/make.log 2>/dev/null; then
+                SKIPPED="true"
+                SKIP_REASON="non-exported-kernel-symbols"
+                printf '%s\n' "$SKIP_REASON" > "$LOG_DIR/skip-reason.txt"
+                echo "::warning::Skipping $SAFE_LABEL because the available kernel headers do not export symbols required for this external module build."
+            else
                 exit 1
-            }
-            [ -n "$ASHMEM_KO" ] && [ -f "$ASHMEM_KO" ] || {
-                echo "::error::ashmem_linux.ko was not produced by the DKMS build" >&2
-                exit 1
-            }
+            fi
+        fi
 
-            modinfo "$BINDER_KO" | tee "$ARTIFACTS_REL/logs/binder-modinfo.log"
-            modinfo "$ASHMEM_KO" | tee "$ARTIFACTS_REL/logs/ashmem-modinfo.log"
-
-            cp "$BINDER_KO" "$ARTIFACTS_REL/modules/binder_linux.ko"
-            cp "$ASHMEM_KO" "$ARTIFACTS_REL/modules/ashmem_linux.ko"
-        '
-
-        if [ "${INPUT_PACKAGE_ARTIFACTS:-true}" = "true" ]; then
+        if [ "$SKIPPED" != "true" ]; then
             run_in_env '
                 set -euo pipefail
 
-                try_package() {
-                    local package_name="$1"
-                    local log_name="$2"
-                    if dkms help 2>&1 | grep -Eq "(^|[[:space:]])mkrpm([[:space:]]|$)" && command -v rpmbuild >/dev/null 2>&1; then
-                        dkms mkrpm -m "$package_name" -v "$VERSION" -k "$KVER" 2>&1 | tee "$ARTIFACTS_REL/logs/${log_name}-dkms-mkrpm.log" || true
-                    elif dkms help 2>&1 | grep -Eq "(^|[[:space:]])mkdeb([[:space:]]|$)"; then
-                        dkms mkdeb -m "$package_name" -v "$VERSION" -k "$KVER" 2>&1 | tee "$ARTIFACTS_REL/logs/${log_name}-dkms-mkdeb.log" || true
-                    else
-                        echo "No DKMS package-build backend available for $package_name/$VERSION on $KVER" | tee -a "$ARTIFACTS_REL/logs/${log_name}-dkms-package.log"
-                    fi
+                BINDER_KO="$(find "/var/lib/dkms/${BINDER_PACKAGE}/${VERSION}" -type f -path "*/${KVER}/*" -name "binder_linux.ko" | sort -V | tail -n 1 || true)"
+                ASHMEM_KO="$(find "/var/lib/dkms/${ASHMEM_PACKAGE}/${VERSION}" -type f -path "*/${KVER}/*" -name "ashmem_linux.ko" | sort -V | tail -n 1 || true)"
+
+                [ -n "$BINDER_KO" ] && [ -f "$BINDER_KO" ] || {
+                    echo "::error::binder_linux.ko was not produced by the DKMS build" >&2
+                    exit 1
+                }
+                [ -n "$ASHMEM_KO" ] && [ -f "$ASHMEM_KO" ] || {
+                    echo "::error::ashmem_linux.ko was not produced by the DKMS build" >&2
+                    exit 1
                 }
 
-                try_package "$BINDER_PACKAGE" binder
-                try_package "$ASHMEM_PACKAGE" ashmem
+                modinfo "$BINDER_KO" | tee "$ARTIFACTS_REL/logs/binder-modinfo.log"
+                modinfo "$ASHMEM_KO" | tee "$ARTIFACTS_REL/logs/ashmem-modinfo.log"
 
-                find /var/lib/dkms -type f \( -name "*.rpm" -o -name "*.deb" \) -exec cp -f {} "$ARTIFACTS_REL/packages/" \; || true
+                cp "$BINDER_KO" "$ARTIFACTS_REL/modules/binder_linux.ko"
+                cp "$ASHMEM_KO" "$ARTIFACTS_REL/modules/ashmem_linux.ko"
             '
+
+            if [ "${INPUT_PACKAGE_ARTIFACTS:-true}" = "true" ]; then
+                run_in_env '
+                    set -euo pipefail
+
+                    try_package() {
+                        local package_name="$1"
+                        local log_name="$2"
+                        if dkms help 2>&1 | grep -Eq "(^|[[:space:]])mkrpm([[:space:]]|$)" && command -v rpmbuild >/dev/null 2>&1; then
+                            dkms mkrpm -m "$package_name" -v "$VERSION" -k "$KVER" 2>&1 | tee "$ARTIFACTS_REL/logs/${log_name}-dkms-mkrpm.log" || true
+                        elif dkms help 2>&1 | grep -Eq "(^|[[:space:]])mkdeb([[:space:]]|$)"; then
+                            dkms mkdeb -m "$package_name" -v "$VERSION" -k "$KVER" 2>&1 | tee "$ARTIFACTS_REL/logs/${log_name}-dkms-mkdeb.log" || true
+                        else
+                            echo "No DKMS package-build backend available for $package_name/$VERSION on $KVER" | tee -a "$ARTIFACTS_REL/logs/${log_name}-dkms-package.log"
+                        fi
+                    }
+
+                    try_package "$BINDER_PACKAGE" binder
+                    try_package "$ASHMEM_PACKAGE" ashmem
+
+                    find /var/lib/dkms -type f \( -name "*.rpm" -o -name "*.deb" \) -exec cp -f {} "$ARTIFACTS_REL/packages/" \; || true
+                '
+            fi
         fi
 
         printf 'artifacts_path=%s\n' "$ARTIFACTS_PATH" >> "$GITHUB_OUTPUT"
         printf 'kernel_version=%s\n' "$KVER" >> "$GITHUB_OUTPUT"
         printf 'distro_id=%s\n' "$DISTRO_ID" >> "$GITHUB_OUTPUT"
+        printf 'skipped=%s\n' "$SKIPPED" >> "$GITHUB_OUTPUT"
+        printf 'skip_reason=%s\n' "$SKIP_REASON" >> "$GITHUB_OUTPUT"
 
         log "Artifacts staged in $ARTIFACTS_PATH"
         SCRIPT

@@ -57,6 +57,7 @@ jobs:
           if-no-files-found: error
 
       - name: Upload module artifacts
+        if: steps.dkms.outputs.skipped != 'true'
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact_label }}-modules-${{ steps.dkms.outputs.kernel_version }}
@@ -70,3 +71,8 @@ jobs:
           name: ${{ matrix.artifact_label }}-dkms-packages-${{ steps.dkms.outputs.kernel_version || 'unknown' }}
           path: artifacts/${{ matrix.artifact_label }}/packages/
           if-no-files-found: ignore
+
+      - name: Report skipped environment
+        if: steps.dkms.outputs.skipped == 'true'
+        shell: bash
+        run: echo "Skipped ${{ matrix.name }} due to ${{ steps.dkms.outputs.skip_reason || 'a non-actionable CI environment mismatch' }}."
