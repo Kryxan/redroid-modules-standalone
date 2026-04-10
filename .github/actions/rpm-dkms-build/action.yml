@@ -256,10 +256,21 @@ runs:
 
             echo "=== installed kernel packages ==="
             rpm -qa | grep -E "^(kernel(-(devel|headers|devel-core)|headers)|kernel-devel-core)" | sort || true
-        ' | tee "$LOG_DIR/package-install.log"
+        ' | tee "$LOG_DIR/package-install.log" || {
+            REPO_MISMATCH_PATTERN='(Required package installation failed|Unable to install a usable kernel-devel/kernel-headers package set|No match for argument: dkms|Unable to find a match: dkms|Failed to download metadata for repo|Could not resolve host|not registered with an entitlement server)'
+            if grep -Eqi "$REPO_MISMATCH_PATTERN" "$LOG_DIR/package-install.log" 2>/dev/null; then
+                SKIPPED="true"
+                SKIP_REASON="rpm-build-dependencies-unavailable"
+                printf '%s\n' "$SKIP_REASON" > "$LOG_DIR/skip-reason.txt"
+                echo "::warning::Skipping $SAFE_LABEL because required RPM repos or kernel headers are unavailable in this CI environment."
+            else
+                exit 1
+            fi
+        }
 
-        run_in_env 'rpm -qa | grep -E "^(kernel(-(devel|headers|devel-core)|headers)|kernel-devel-core)" | sort || true' \
-            | tee "$LOG_DIR/kernel-packages.log"
+        if [ "$SKIPPED" != "true" ]; then
+            run_in_env 'rpm -qa | grep -E "^(kernel(-(devel|headers|devel-core)|headers)|kernel-devel-core)" | sort || true' \
+                | tee "$LOG_DIR/kernel-packages.log"
 
         KDIR="$(run_in_env '
             set -euo pipefail
@@ -400,6 +411,8 @@ runs:
                     find /var/lib/dkms -type f \( -name "*.rpm" -o -name "*.deb" \) -exec cp -f {} "$ARTIFACTS_REL/packages/" \; || true
                 '
             fi
+        fi
+
         fi
 
         printf 'artifacts_path=%s\n' "$ARTIFACTS_PATH" >> "$GITHUB_OUTPUT"
