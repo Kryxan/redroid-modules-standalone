@@ -19,7 +19,12 @@
 #include <linux/mutex.h>
 #include <linux/mount.h>
 #include <linux/parser.h>
+#include <linux/version.h>
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 17, 0)
 #include <linux/pseudo_fs.h>
+#else
+#include <linux/pagemap.h>
+#endif
 #include <linux/radix-tree.h>
 #include <linux/sched.h>
 #include <linux/seq_file.h>

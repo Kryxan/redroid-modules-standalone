@@ -138,8 +138,13 @@ module_param_named(devices, binder_devices_param, charp, 0444);
 static DECLARE_WAIT_QUEUE_HEAD(binder_user_error_wait);
 static int binder_stop_on_user_error;
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 0, 0)
+static int binder_set_stop_on_user_error(const char *val,
+										 struct kernel_param *kp)
+#else
 static int binder_set_stop_on_user_error(const char *val,
 										 const struct kernel_param *kp)
+#endif
 {
 	int ret;
 
@@ -2565,7 +2570,7 @@ static int binder_translate_binder(struct flat_binder_object *fp,
 		ret = -EINVAL;
 		goto done;
 	}
-	if (security_binder_transfer_binder(COMPAT_BINDER_CRED(proc), COMPAT_BINDER_CRED(target_proc)))
+	if (compat_security_binder_transfer_binder(proc, target_proc))
 	{
 		ret = -EPERM;
 		goto done;
@@ -2613,7 +2618,7 @@ static int binder_translate_handle(struct flat_binder_object *fp,
 						  proc->pid, thread->pid, fp->handle);
 		return -EINVAL;
 	}
-	if (security_binder_transfer_binder(COMPAT_BINDER_CRED(proc), COMPAT_BINDER_CRED(target_proc)))
+	if (compat_security_binder_transfer_binder(proc, target_proc))
 	{
 		ret = -EPERM;
 		goto done;
@@ -2707,7 +2712,7 @@ static int binder_translate_fd(u32 fd, binder_size_t fd_offset,
 		ret = -EBADF;
 		goto err_fget;
 	}
-	ret = security_binder_transfer_file(COMPAT_BINDER_CRED(proc), COMPAT_BINDER_CRED(target_proc), file);
+	ret = compat_security_binder_transfer_file(proc, target_proc, file);
 	if (ret < 0)
 	{
 		ret = -EPERM;
@@ -3136,8 +3141,7 @@ static void binder_transaction(struct binder_proc *proc,
 			return_error_line = __LINE__;
 			goto err_invalid_target_handle;
 		}
-		if (security_binder_transaction(COMPAT_BINDER_CRED(proc),
-										COMPAT_BINDER_CRED(target_proc)) < 0)
+		if (compat_security_binder_transaction(proc, target_proc) < 0)
 		{
 			return_error = BR_FAILED_REPLY;
 			return_error_param = -EPERM;
@@ -5257,7 +5261,7 @@ static int binder_ioctl_set_ctx_mgr(struct file *filp,
 		ret = -EBUSY;
 		goto out;
 	}
-	ret = security_binder_set_context_mgr(COMPAT_BINDER_CRED(proc));
+	ret = compat_security_binder_set_context_mgr(proc);
 	if (ret < 0)
 		goto out;
 	if (uid_valid(context->binder_context_mgr_uid))

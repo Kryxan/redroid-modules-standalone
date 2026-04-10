@@ -1,5 +1,5 @@
-REPO_VERSION_FILE ?= $(CURDIR)/../VERSION
-MODULE_VERSION := $(shell cat $(REPO_VERSION_FILE))
+REPO_VERSION_FILE ?= $(firstword $(wildcard $(CURDIR)/../VERSION $(CURDIR)/VERSION /usr/src/VERSION))
+MODULE_VERSION := $(if $(REPO_VERSION_FILE),$(shell cat $(REPO_VERSION_FILE)),0.0.0)
 ccflags-y += -I$(src) -DREDROID_MODULE_VERSION="\"$(MODULE_VERSION)\""
 obj-m := ashmem_linux.o
 ashmem_linux-y := ashmem.o deps.o

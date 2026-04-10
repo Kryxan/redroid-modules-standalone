@@ -1,7 +1,7 @@
 # Out-of-tree: define BINDERFS and default binder device list.
 # Uses _HACKED suffix to avoid conflict with in-tree CONFIG_ANDROID_BINDER_DEVICES.
-REPO_VERSION_FILE ?= $(CURDIR)/../VERSION
-MODULE_VERSION := $(shell cat $(REPO_VERSION_FILE))
+REPO_VERSION_FILE ?= $(firstword $(wildcard $(CURDIR)/../VERSION $(CURDIR)/VERSION /usr/src/VERSION))
+MODULE_VERSION := $(if $(REPO_VERSION_FILE),$(shell cat $(REPO_VERSION_FILE)),0.0.0)
 ccflags-y = -I$(src) -DCONFIG_ANDROID_BINDERFS -DCONFIG_ANDROID_BINDER_DEVICES_HACKED="\"binder,hwbinder,vndbinder\"" -DREDROID_MODULE_VERSION="\"$(MODULE_VERSION)\""
 obj-m := binder_linux.o
 binder_linux-y := binderfs.o binder.o binder_alloc.o idr.o deps.o

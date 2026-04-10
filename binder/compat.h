@@ -193,20 +193,66 @@ static inline void compat_task_getsecid(struct task_struct *task, u32 *secid)
 #define COMPAT_LSM_HAS_CTX 0
 
 /* ------------------------------------------------------------------ */
-/* Security binder: cred-based API in 5.15.2+                        */
+/* Security binder: task-vs-cred API drift                            */
 /* ------------------------------------------------------------------ */
-/*
- * In 5.15.2+ security_binder_* functions take const struct cred *
- * instead of struct task_struct *.  struct binder_proc gained a
- * 'cred' member at the same time.
- */
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 2)
-#define COMPAT_HAS_BINDER_CRED 1
-#define COMPAT_BINDER_CRED(proc) ((proc)->cred)
-#else
-#define COMPAT_HAS_BINDER_CRED 0
-#define COMPAT_BINDER_CRED(proc) ((proc)->tsk)
-#endif
+typedef int (*compat_security_binder_set_context_mgr_task_t)(struct task_struct *);
+typedef int (*compat_security_binder_set_context_mgr_cred_t)(const struct cred *);
+typedef int (*compat_security_binder_two_task_t)(struct task_struct *, struct task_struct *);
+typedef int (*compat_security_binder_two_cred_t)(const struct cred *, const struct cred *);
+typedef int (*compat_security_binder_file_task_t)(struct task_struct *, struct task_struct *, struct file *);
+typedef int (*compat_security_binder_file_cred_t)(const struct cred *, const struct cred *, struct file *);
+
+#define compat_security_binder_set_context_mgr(proc)                                        \
+    ({                                                                                      \
+        int __ret;                                                                          \
+        if (__builtin_types_compatible_p(typeof(&security_binder_set_context_mgr),          \
+                                         compat_security_binder_set_context_mgr_cred_t))    \
+            __ret = ((compat_security_binder_set_context_mgr_cred_t)                        \
+                         security_binder_set_context_mgr)((proc)->cred);                    \
+        else                                                                                \
+            __ret = ((compat_security_binder_set_context_mgr_task_t)                        \
+                         security_binder_set_context_mgr)((proc)->tsk);                     \
+        __ret;                                                                              \
+    })
+
+#define compat_security_binder_transaction(from_proc, to_proc)                              \
+    ({                                                                                      \
+        int __ret;                                                                          \
+        if (__builtin_types_compatible_p(typeof(&security_binder_transaction),              \
+                                         compat_security_binder_two_cred_t))                \
+            __ret = ((compat_security_binder_two_cred_t)security_binder_transaction)(       \
+                (from_proc)->cred, (to_proc)->cred);                                        \
+        else                                                                                \
+            __ret = ((compat_security_binder_two_task_t)security_binder_transaction)(       \
+                (from_proc)->tsk, (to_proc)->tsk);                                          \
+        __ret;                                                                              \
+    })
+
+#define compat_security_binder_transfer_binder(from_proc, to_proc)                          \
+    ({                                                                                      \
+        int __ret;                                                                          \
+        if (__builtin_types_compatible_p(typeof(&security_binder_transfer_binder),          \
+                                         compat_security_binder_two_cred_t))                \
+            __ret = ((compat_security_binder_two_cred_t)security_binder_transfer_binder)(   \
+                (from_proc)->cred, (to_proc)->cred);                                        \
+        else                                                                                \
+            __ret = ((compat_security_binder_two_task_t)security_binder_transfer_binder)(   \
+                (from_proc)->tsk, (to_proc)->tsk);                                          \
+        __ret;                                                                              \
+    })
+
+#define compat_security_binder_transfer_file(from_proc, to_proc, file)                      \
+    ({                                                                                      \
+        int __ret;                                                                          \
+        if (__builtin_types_compatible_p(typeof(&security_binder_transfer_file),            \
+                                         compat_security_binder_file_cred_t))               \
+            __ret = ((compat_security_binder_file_cred_t)security_binder_transfer_file)(    \
+                (from_proc)->cred, (to_proc)->cred, (file));                                \
+        else                                                                                \
+            __ret = ((compat_security_binder_file_task_t)security_binder_transfer_file)(    \
+                (from_proc)->tsk, (to_proc)->tsk, (file));                                  \
+        __ret;                                                                              \
+    })
 
 /* ------------------------------------------------------------------ */
 /* task_work_add: TWA_RESUME appeared in 5.11                         */
