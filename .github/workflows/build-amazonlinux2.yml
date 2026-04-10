@@ -68,13 +68,7 @@ jobs:
               exit 0
             fi
 
-            echo "::warning::Exact kernel-devel/kernel-headers for ${KREL} are unavailable in the GitHub-hosted runner; trying Amazon Linux 2 4.14 packages." | tee -a dist/logs/kernel-detect.log
-
-            if yum -y install "kernel-devel-4.14*" "kernel-headers-4.14*"; then
-              exit 0
-            fi
-
-            echo "::warning::Amazon Linux 2 4.14 headers were unavailable; falling back to the default kernel-devel/kernel-headers packages." | tee -a dist/logs/kernel-detect.log
+            echo "::warning::Exact kernel-devel/kernel-headers for ${KREL} are unavailable in the GitHub-hosted runner; falling back to the default Amazon Linux 2 kernel packages." | tee -a dist/logs/kernel-detect.log
 
             if ! yum -y install kernel-devel kernel-headers; then
               echo "::error::Unable to install usable Amazon Linux 2 kernel-devel/kernel-headers packages" | tee -a dist/logs/kernel-detect.log
@@ -161,13 +155,22 @@ jobs:
             set -euo pipefail
             VERSION="$(cat VERSION)"
 
+            build_one() {
+              local pkg_name="$1"
+              local log_prefix="$2"
+              if ! dkms build -m "$pkg_name" -v "$VERSION" -k "$KVER" 2>&1 | tee "dist/logs/${log_prefix}-dkms-build.log"; then
+                find "/var/lib/dkms/${pkg_name}/${VERSION}" -type f -name "make.log" -exec cp -f {} dist/logs/ \; || true
+                exit 1
+              fi
+            }
+
             dkms remove -m redroid-binder -v "$VERSION" --all >/dev/null 2>&1 || true
             dkms remove -m redroid-ashmem -v "$VERSION" --all >/dev/null 2>&1 || true
 
             dkms add -m redroid-binder -v "$VERSION" 2>&1 | tee dist/logs/binder-dkms-add.log
             dkms add -m redroid-ashmem -v "$VERSION" 2>&1 | tee dist/logs/ashmem-dkms-add.log
-            dkms build -m redroid-binder -v "$VERSION" -k "$KVER" 2>&1 | tee dist/logs/binder-dkms-build.log
-            dkms build -m redroid-ashmem -v "$VERSION" -k "$KVER" 2>&1 | tee dist/logs/ashmem-dkms-build.log
+            build_one redroid-binder binder
+            build_one redroid-ashmem ashmem
             dkms status | tee dist/logs/dkms-status.log
           '
 
