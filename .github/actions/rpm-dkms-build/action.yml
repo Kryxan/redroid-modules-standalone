@@ -1,0 +1,370 @@
+name: RPM DKMS Build
+
+description: >-
+  Standardized DKMS build pipeline for redroid binder + ashmem modules across
+  RPM-based Linux distributions, with explicit logging, kernel-header
+  resolution, module verification, and artifact staging.
+
+inputs:
+  container-image:
+    description: Optional RPM distro container image to run the build inside.
+    required: false
+    default: ""
+  distro-label:
+    description: Optional label used when staging artifacts under ./artifacts/.
+    required: false
+    default: ""
+  workdir:
+    description: Repository-relative working directory that contains VERSION, binder/, and ashmem/.
+    required: false
+    default: "."
+  package-artifacts:
+    description: Attempt DKMS RPM/DEB packaging when the backend is available.
+    required: false
+    default: "true"
+
+outputs:
+  artifacts_path:
+    description: Path to the staged module, log, and package artifacts.
+    value: ${{ steps.build.outputs.artifacts_path }}
+  kernel_version:
+    description: Kernel version selected for the DKMS build.
+    value: ${{ steps.build.outputs.kernel_version }}
+  distro_id:
+    description: Distribution ID detected from /etc/os-release.
+    value: ${{ steps.build.outputs.distro_id }}
+
+runs:
+  using: composite
+  steps:
+    - name: Build RPM DKMS artifacts
+      id: build
+      shell: bash
+      env:
+        INPUT_CONTAINER_IMAGE: ${{ inputs.container-image }}
+        INPUT_DISTRO_LABEL: ${{ inputs.distro-label }}
+        INPUT_WORKDIR: ${{ inputs.workdir }}
+        INPUT_PACKAGE_ARTIFACTS: ${{ inputs.package-artifacts }}
+      run: |
+        set -euo pipefail
+
+        cat > "$RUNNER_TEMP/rpm-dkms-build.sh" <<'SCRIPT'
+        #!/usr/bin/env bash
+        set -euo pipefail
+
+        log() {
+            printf '[rpm-dkms-build] %s\n' "$*"
+        }
+
+        fail() {
+            echo "::error::$*"
+            exit 1
+        }
+
+        slugify() {
+            printf '%s' "$1" \
+                | tr '[:upper:]' '[:lower:]' \
+                | sed -E 's/[^a-z0-9._-]+/-/g; s/^-+//; s/-+$//; s/-{2,}/-/g'
+        }
+
+        read_dkms_value() {
+            local file="$1"
+            local key="$2"
+            sed -nE "s/^${key}=\"([^\"]*)\".*/\1/p" "$file" | head -n 1
+        }
+
+        ROOT_DIR="$GITHUB_WORKSPACE"
+        if [ -n "${INPUT_WORKDIR:-}" ] && [ "${INPUT_WORKDIR}" != "." ]; then
+            ROOT_DIR="$(cd "$GITHUB_WORKSPACE/$INPUT_WORKDIR" && pwd)"
+        fi
+        cd "$ROOT_DIR"
+
+        BUILD_CONTAINER_NAME=""
+        if [ -n "${INPUT_CONTAINER_IMAGE:-}" ]; then
+            BUILD_CONTAINER_NAME="rpm-dkms-$(date +%s)-$$"
+            log "Starting build container ${INPUT_CONTAINER_IMAGE}"
+            docker pull "$INPUT_CONTAINER_IMAGE"
+            docker rm -f "$BUILD_CONTAINER_NAME" >/dev/null 2>&1 || true
+            docker run -d \
+                --name "$BUILD_CONTAINER_NAME" \
+                -v "$ROOT_DIR":/workspace \
+                -w /workspace \
+                "$INPUT_CONTAINER_IMAGE" \
+                tail -f /dev/null >/dev/null
+        fi
+
+        cleanup() {
+            if [ -n "$BUILD_CONTAINER_NAME" ]; then
+                docker rm -f "$BUILD_CONTAINER_NAME" >/dev/null 2>&1 || true
+            fi
+        }
+        trap cleanup EXIT
+
+        SAFE_LABEL="rpm-dkms"
+        ARTIFACTS_REL="artifacts/$SAFE_LABEL"
+        PKG_MGR=""
+        DISTRO_ID="unknown"
+        DISTRO_VERSION_ID="unknown"
+        KREL=""
+        KVER=""
+        VERSION=""
+        BINDER_PACKAGE=""
+        ASHMEM_PACKAGE=""
+
+        run_in_env() {
+            local script="$1"
+            if [ -n "$BUILD_CONTAINER_NAME" ]; then
+                docker exec \
+                    -e CI=1 \
+                    -e GITHUB_ACTIONS=1 \
+                    -e SAFE_LABEL="$SAFE_LABEL" \
+                    -e ARTIFACTS_REL="$ARTIFACTS_REL" \
+                    -e PKG_MGR="${PKG_MGR:-}" \
+                    -e DISTRO_ID="${DISTRO_ID:-unknown}" \
+                    -e DISTRO_VERSION_ID="${DISTRO_VERSION_ID:-unknown}" \
+                    -e KREL="${KREL:-}" \
+                    -e KVER="${KVER:-}" \
+                    -e VERSION="${VERSION:-}" \
+                    -e BINDER_PACKAGE="${BINDER_PACKAGE:-}" \
+                    -e ASHMEM_PACKAGE="${ASHMEM_PACKAGE:-}" \
+                    -w /workspace \
+                    "$BUILD_CONTAINER_NAME" \
+                    bash -lc "$script"
+            else
+                SAFE_LABEL="$SAFE_LABEL" \
+                ARTIFACTS_REL="$ARTIFACTS_REL" \
+                PKG_MGR="${PKG_MGR:-}" \
+                DISTRO_ID="${DISTRO_ID:-unknown}" \
+                DISTRO_VERSION_ID="${DISTRO_VERSION_ID:-unknown}" \
+                KREL="${KREL:-}" \
+                KVER="${KVER:-}" \
+                VERSION="${VERSION:-}" \
+                BINDER_PACKAGE="${BINDER_PACKAGE:-}" \
+                ASHMEM_PACKAGE="${ASHMEM_PACKAGE:-}" \
+                bash -lc "$script"
+            fi
+        }
+
+        DISTRO_ID="$(run_in_env '. /etc/os-release >/dev/null 2>&1 || true; printf "%s" "${ID:-unknown}"')"
+        DISTRO_VERSION_ID="$(run_in_env '. /etc/os-release >/dev/null 2>&1 || true; printf "%s" "${VERSION_ID:-unknown}"')"
+        KREL="$(run_in_env 'uname -r')"
+        SAFE_LABEL="$(slugify "${INPUT_DISTRO_LABEL:-$DISTRO_ID}")"
+        [ -n "$SAFE_LABEL" ] || SAFE_LABEL="rpm-dkms"
+        ARTIFACTS_REL="artifacts/$SAFE_LABEL"
+        ARTIFACTS_PATH="$ROOT_DIR/$ARTIFACTS_REL"
+        LOG_DIR="$ARTIFACTS_PATH/logs"
+        MODULE_DIR="$ARTIFACTS_PATH/modules"
+        PACKAGE_DIR="$ARTIFACTS_PATH/packages"
+        mkdir -p "$LOG_DIR" "$MODULE_DIR" "$PACKAGE_DIR"
+
+        log "Repository root: $ROOT_DIR"
+        log "Detected distro: ${DISTRO_ID:-unknown} ${DISTRO_VERSION_ID:-unknown}"
+        log "Detected kernel: $KREL"
+
+        run_in_env '
+            set -euo pipefail
+            echo "=== uname -a ==="
+            uname -a
+            echo
+            echo "=== /etc/os-release ==="
+            cat /etc/os-release
+        ' | tee "$LOG_DIR/environment.log"
+
+        PKG_MGR="$(run_in_env 'if command -v dnf >/dev/null 2>&1; then echo dnf; elif command -v yum >/dev/null 2>&1; then echo yum; else echo none; fi')"
+        [ "$PKG_MGR" != "none" ] || fail "No supported RPM package manager found (expected dnf or yum)."
+        log "Using package manager: $PKG_MGR"
+
+        run_in_env '
+            set -euo pipefail
+
+            install_required() {
+                "$@" || {
+                    echo "::error::Required package installation failed: $*" >&2
+                    exit 1
+                }
+            }
+
+            install_optional() {
+                "$@" || true
+            }
+
+            if command -v rpm-ostree >/dev/null 2>&1 && [ -e /run/ostree-booted ]; then
+                echo "rpm-ostree host detected; using live layering" | tee "$ARTIFACTS_REL/logs/package-manager.log"
+                install_required rpm-ostree install --apply-live --allow-inactive gcc make git dkms
+                install_optional rpm-ostree install --apply-live --allow-inactive kmod findutils which tar gzip sed elfutils-libelf-devel rpm-build
+
+                if rpm-ostree install --apply-live --allow-inactive "kernel-devel-${KREL}" "kernel-headers-${KREL}"; then
+                    :
+                elif rpm-ostree install --apply-live --allow-inactive kernel-devel kernel-headers kernel-devel-core; then
+                    :
+                else
+                    echo "::error::rpm-ostree layering failed while installing kernel headers for ${KREL}" >&2
+                    exit 1
+                fi
+            else
+                "$PKG_MGR" -y update || true
+                install_required "$PKG_MGR" -y install gcc make git dkms kmod findutils which tar gzip sed elfutils-libelf-devel
+                install_optional "$PKG_MGR" -y install rpm-build kernel-devel-core
+
+                if ! "$PKG_MGR" -y install "kernel-devel-${KREL}" "kernel-headers-${KREL}"; then
+                    echo "Exact kernel-devel/kernel-headers for ${KREL} not available; trying fallback packages" | tee -a "$ARTIFACTS_REL/logs/package-manager.log"
+
+                    if [ "$DISTRO_ID" = "amzn" ] && [ "$DISTRO_VERSION_ID" = "2023" ]; then
+                        "$PKG_MGR" -y install --allowerasing "kernel-devel-6.1.*" "kernel-headers-6.1.*" || true
+                    fi
+
+                    "$PKG_MGR" -y install kernel-devel kernel-headers \
+                        || "$PKG_MGR" -y install kernel-devel kernel-headers kernel-devel-core \
+                        || "$PKG_MGR" -y install kernel-devel-core kernel-headers \
+                        || {
+                            echo "::error::Unable to install a usable kernel-devel/kernel-headers package set for ${KREL}" >&2
+                            exit 1
+                        }
+                fi
+            fi
+
+            echo "=== installed kernel packages ==="
+            rpm -qa | grep -E "^(kernel(-(devel|headers|devel-core)|headers)|kernel-devel-core)" | sort || true
+        ' | tee "$LOG_DIR/package-install.log"
+
+        run_in_env 'rpm -qa | grep -E "^(kernel(-(devel|headers|devel-core)|headers)|kernel-devel-core)" | sort || true' \
+            | tee "$LOG_DIR/kernel-packages.log"
+
+        KDIR="$(run_in_env '
+            set -euo pipefail
+            BUILD_LINK="/lib/modules/${KREL}/build"
+            if [ -L "$BUILD_LINK" ] || [ -d "$BUILD_LINK" ]; then
+                BUILD_TARGET="$(readlink -f "$BUILD_LINK" || true)"
+                if [ -n "$BUILD_TARGET" ] && [ -f "$BUILD_TARGET/Makefile" ]; then
+                    printf "%s" "$BUILD_TARGET"
+                    exit 0
+                fi
+            fi
+
+            if [ "$DISTRO_ID" = "amzn" ] && [ "$DISTRO_VERSION_ID" = "2023" ]; then
+                KDIR="$(find /usr/src/kernels -maxdepth 1 -mindepth 1 -type d -name "6.1.*" | sort -V | tail -n 1 || true)"
+                if [ -n "$KDIR" ] && [ -f "$KDIR/Makefile" ]; then
+                    printf "%s" "$KDIR"
+                    exit 0
+                fi
+            fi
+
+            KDIR="$(find /usr/src/kernels -maxdepth 1 -mindepth 1 -type d | sort -V | tail -n 1 || true)"
+            if [ -n "$KDIR" ] && [ -f "$KDIR/Makefile" ]; then
+                printf "%s" "$KDIR"
+                exit 0
+            fi
+
+            exit 1
+        ')" || true
+
+        [ -n "$KDIR" ] || fail "No usable kernel headers tree was found after package installation."
+        [ -f "$ROOT_DIR/VERSION" ] || fail "Missing VERSION file in $ROOT_DIR"
+        KVER="$(basename "$KDIR")"
+        VERSION="$(tr -d ' \t\r\n' < "$ROOT_DIR/VERSION")"
+        [ -n "$VERSION" ] || fail "VERSION file is empty."
+
+        BINDER_PACKAGE="$(read_dkms_value "$ROOT_DIR/binder/dkms.conf" PACKAGE_NAME)"
+        ASHMEM_PACKAGE="$(read_dkms_value "$ROOT_DIR/ashmem/dkms.conf" PACKAGE_NAME)"
+        [ -n "$BINDER_PACKAGE" ] || fail "Unable to resolve PACKAGE_NAME from binder/dkms.conf"
+        [ -n "$ASHMEM_PACKAGE" ] || fail "Unable to resolve PACKAGE_NAME from ashmem/dkms.conf"
+
+        log "Using kernel headers from $KDIR"
+        run_in_env '
+            set -euo pipefail
+            mkdir -p "/lib/modules/${KVER}"
+            ln -sfn "'"$KDIR"'" "/lib/modules/${KVER}/build"
+        '
+
+        log "Preparing DKMS source trees for version $VERSION"
+        run_in_env '
+            set -euo pipefail
+            prepare_module() {
+                local src_dir="$1"
+                local pkg_name="$2"
+                local target="/usr/src/${pkg_name}-${VERSION}"
+                rm -rf "$target"
+                mkdir -p "$target"
+                cp -a "${src_dir}/." "$target/"
+                sed -i "s/^PACKAGE_VERSION=.*/PACKAGE_VERSION=\"${VERSION}\"/" "$target/dkms.conf"
+            }
+
+            install -m 0644 VERSION /usr/src/VERSION
+            prepare_module binder "$BINDER_PACKAGE"
+            prepare_module ashmem "$ASHMEM_PACKAGE"
+        ' | tee "$LOG_DIR/dkms-prepare.log"
+
+        run_in_env '
+            set -euo pipefail
+
+            build_one() {
+                local package_name="$1"
+                local log_name="$2"
+                dkms remove -m "$package_name" -v "$VERSION" --all >/dev/null 2>&1 || true
+                dkms add -m "$package_name" -v "$VERSION" 2>&1 | tee "$ARTIFACTS_REL/logs/${log_name}-dkms-add.log"
+                if ! dkms build -m "$package_name" -v "$VERSION" -k "$KVER" 2>&1 | tee "$ARTIFACTS_REL/logs/${log_name}-dkms-build.log"; then
+                    find "/var/lib/dkms/${package_name}/${VERSION}" -type f -name "make.log" -exec cp -f {} "$ARTIFACTS_REL/logs/" \; || true
+                    echo "::error::DKMS build failed for ${package_name}/${VERSION} on kernel ${KVER}" >&2
+                    exit 1
+                fi
+            }
+
+            build_one "$BINDER_PACKAGE" binder
+            build_one "$ASHMEM_PACKAGE" ashmem
+            dkms status | tee "$ARTIFACTS_REL/logs/dkms-status.log"
+        '
+
+        run_in_env '
+            set -euo pipefail
+
+            BINDER_KO="$(find "/var/lib/dkms/${BINDER_PACKAGE}/${VERSION}" -type f -path "*/${KVER}/*" -name "binder_linux.ko" | sort -V | tail -n 1 || true)"
+            ASHMEM_KO="$(find "/var/lib/dkms/${ASHMEM_PACKAGE}/${VERSION}" -type f -path "*/${KVER}/*" -name "ashmem_linux.ko" | sort -V | tail -n 1 || true)"
+
+            [ -n "$BINDER_KO" ] && [ -f "$BINDER_KO" ] || {
+                echo "::error::binder_linux.ko was not produced by the DKMS build" >&2
+                exit 1
+            }
+            [ -n "$ASHMEM_KO" ] && [ -f "$ASHMEM_KO" ] || {
+                echo "::error::ashmem_linux.ko was not produced by the DKMS build" >&2
+                exit 1
+            }
+
+            modinfo "$BINDER_KO" | tee "$ARTIFACTS_REL/logs/binder-modinfo.log"
+            modinfo "$ASHMEM_KO" | tee "$ARTIFACTS_REL/logs/ashmem-modinfo.log"
+
+            cp "$BINDER_KO" "$ARTIFACTS_REL/modules/binder_linux.ko"
+            cp "$ASHMEM_KO" "$ARTIFACTS_REL/modules/ashmem_linux.ko"
+        '
+
+        if [ "${INPUT_PACKAGE_ARTIFACTS:-true}" = "true" ]; then
+            run_in_env '
+                set -euo pipefail
+
+                try_package() {
+                    local package_name="$1"
+                    local log_name="$2"
+                    if dkms help 2>&1 | grep -Eq "(^|[[:space:]])mkrpm([[:space:]]|$)" && command -v rpmbuild >/dev/null 2>&1; then
+                        dkms mkrpm -m "$package_name" -v "$VERSION" -k "$KVER" 2>&1 | tee "$ARTIFACTS_REL/logs/${log_name}-dkms-mkrpm.log" || true
+                    elif dkms help 2>&1 | grep -Eq "(^|[[:space:]])mkdeb([[:space:]]|$)"; then
+                        dkms mkdeb -m "$package_name" -v "$VERSION" -k "$KVER" 2>&1 | tee "$ARTIFACTS_REL/logs/${log_name}-dkms-mkdeb.log" || true
+                    else
+                        echo "No DKMS package-build backend available for $package_name/$VERSION on $KVER" | tee -a "$ARTIFACTS_REL/logs/${log_name}-dkms-package.log"
+                    fi
+                }
+
+                try_package "$BINDER_PACKAGE" binder
+                try_package "$ASHMEM_PACKAGE" ashmem
+
+                find /var/lib/dkms -type f \( -name "*.rpm" -o -name "*.deb" \) -exec cp -f {} "$ARTIFACTS_REL/packages/" \; || true
+            '
+        fi
+
+        printf 'artifacts_path=%s\n' "$ARTIFACTS_PATH" >> "$GITHUB_OUTPUT"
+        printf 'kernel_version=%s\n' "$KVER" >> "$GITHUB_OUTPUT"
+        printf 'distro_id=%s\n' "$DISTRO_ID" >> "$GITHUB_OUTPUT"
+
+        log "Artifacts staged in $ARTIFACTS_PATH"
+        SCRIPT
+
+        chmod +x "$RUNNER_TEMP/rpm-dkms-build.sh"
+        "$RUNNER_TEMP/rpm-dkms-build.sh"

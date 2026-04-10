@@ -1,135 +1,72 @@
 name: Build and Validate (RHEL and CentOS Stream)
 
 on:
-    push:
-        branches: [main, master]
-        paths-ignore: ["**/*.md", "docs/**"]
-    pull_request:
-        branches: [main, master]
-        paths-ignore: ["**/*.md", "docs/**"]
-    workflow_dispatch:
+  push:
+    branches: [main, master]
+    paths-ignore: ["**/*.md", "docs/**"]
+  pull_request:
+    branches: [main, master]
+    paths-ignore: ["**/*.md", "docs/**"]
+  workflow_dispatch:
 
 permissions:
-    contents: read
+  contents: read
 
 jobs:
-    rhel-centos:
-        name: ${{ matrix.name }}
-        runs-on: ubuntu-latest
-        container:
-            image: ${{ matrix.image }}
-        strategy:
-            fail-fast: false
-            matrix:
-                include:
-                    - name: centos-stream-8
-                      image: quay.io/centos/centos:stream8
-                      pkg_mgr: dnf
-                    - name: centos-stream-9
-                      image: quay.io/centos/centos:stream9
-                      pkg_mgr: dnf
-                    - name: rhel-ubi-8
-                      image: registry.access.redhat.com/ubi8/ubi
-                      pkg_mgr: dnf
-                    - name: rhel-ubi-9
-                      image: registry.access.redhat.com/ubi9/ubi
-                      pkg_mgr: dnf
+  rhel-centos:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    continue-on-error: ${{ matrix.allow_failure }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: centos-stream-8
+            image: quay.io/centos/centos:stream8
+            artifact_label: centos-stream-8
+            allow_failure: false
+          - name: centos-stream-9
+            image: quay.io/centos/centos:stream9
+            artifact_label: centos-stream-9
+            allow_failure: false
+          - name: rhel-ubi-8
+            image: registry.access.redhat.com/ubi8/ubi
+            artifact_label: rhel-ubi-8
+            allow_failure: true
+          - name: rhel-ubi-9
+            image: registry.access.redhat.com/ubi9/ubi
+            artifact_label: rhel-ubi-9
+            allow_failure: true
 
-        steps:
-            - uses: actions/checkout@v4
+    steps:
+      - uses: actions/checkout@v4
 
-            - name: Install dependencies and kernel headers
-              id: deps
-              shell: bash
-              run: |
-                  set -euo pipefail
-                  KREL="$(uname -r)"
-                  PKG="${{ matrix.pkg_mgr }}"
+      - name: Build DKMS modules
+        id: dkms
+        uses: ./.github/actions/rpm-dkms-build
+        with:
+          container-image: ${{ matrix.image }}
+          distro-label: ${{ matrix.artifact_label }}
 
-                  if ! command -v "$PKG" >/dev/null 2>&1; then
-                    echo "::warning::Package manager '$PKG' not found, skipping this matrix entry"
-                    echo "skip=true" >> "$GITHUB_OUTPUT"
-                    exit 0
-                  fi
+      - name: Upload build logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_label }}-dkms-logs-${{ steps.dkms.outputs.kernel_version || 'unknown' }}
+          path: artifacts/${{ matrix.artifact_label }}/logs/
+          if-no-files-found: error
 
-                  "$PKG" -y install make gcc clang kmod util-linux python3 findutils which || {
-                    echo "::warning::Failed installing build prerequisites; skipping this matrix entry"
-                    echo "skip=true" >> "$GITHUB_OUTPUT"
-                    exit 0
-                  }
+      - name: Upload module artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_label }}-modules-${{ steps.dkms.outputs.kernel_version }}
+          path: artifacts/${{ matrix.artifact_label }}/modules/*.ko
+          if-no-files-found: error
 
-                  if ! "$PKG" -y install "kernel-devel-${KREL}" "kernel-headers-${KREL}"; then
-                    echo "::warning::kernel-devel/kernel-headers for running kernel ${KREL} unavailable; trying generic packages"
-                    if ! "$PKG" -y install kernel-devel kernel-headers; then
-                      echo "::warning::Missing kernel headers for ${{ matrix.name }}; skipping this matrix entry"
-                      echo "skip=true" >> "$GITHUB_OUTPUT"
-                      exit 0
-                    fi
-                  fi
-
-                  echo "skip=false" >> "$GITHUB_OUTPUT"
-
-            - name: Detect kernel headers
-              if: steps.deps.outputs.skip != 'true'
-              id: kernel
-              shell: bash
-              run: |
-                  set -euo pipefail
-                  KDIR=""
-                  if [ -d "/lib/modules/$(uname -r)/build" ]; then
-                    KDIR="/lib/modules/$(uname -r)/build"
-                  else
-                    KDIR="$(find /usr/src/kernels -maxdepth 1 -mindepth 1 -type d | sort -V | tail -1 || true)"
-                  fi
-
-                  if [ -z "$KDIR" ] || [ ! -f "$KDIR/Makefile" ]; then
-                    echo "::error::No usable kernel headers found"
-                    ls -la /lib/modules || true
-                    ls -la /usr/src || true
-                    ls -la /usr/src/kernels || true
-                    exit 1
-                  fi
-
-                  echo "kdir=$KDIR" >> "$GITHUB_OUTPUT"
-                  echo "kver=$(basename "$KDIR")" >> "$GITHUB_OUTPUT"
-
-            - name: Build modules
-              if: steps.deps.outputs.skip != 'true'
-              shell: bash
-              run: make KERNEL_SRC="${{ steps.kernel.outputs.kdir }}"
-
-            - name: Build userspace tests
-              if: steps.deps.outputs.skip != 'true'
-              shell: bash
-              run: make -C test all
-
-            - name: Runtime validation (binderfs + binder + ashmem)
-              if: steps.deps.outputs.skip != 'true'
-              shell: bash
-              continue-on-error: true
-              run: make ci-test
-
-            - name: Collect module artifacts
-              if: steps.deps.outputs.skip != 'true'
-              shell: bash
-              run: |
-                  set -euo pipefail
-                  mkdir -p dist
-                  cp ashmem/ashmem_linux.ko dist/
-                  cp binder/binder_linux.ko dist/
-                  if [ -f binder/binderfs.ko ]; then
-                    cp binder/binderfs.ko dist/
-                  fi
-
-            - name: Upload artifacts
-              if: steps.deps.outputs.skip != 'true'
-              uses: actions/upload-artifact@v4
-              with:
-                  name: ${{ matrix.name }}-modules-${{ steps.kernel.outputs.kver }}
-                  path: dist/*.ko
-                  if-no-files-found: error
-
-            - name: Report skipped matrix entry
-              if: steps.deps.outputs.skip == 'true'
-              shell: bash
-              run: echo "Skipped ${{ matrix.name }} due to unavailable package manager or kernel headers in this runner/container combination."
+      - name: Upload DKMS packages
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_label }}-dkms-packages-${{ steps.dkms.outputs.kernel_version || 'unknown' }}
+          path: artifacts/${{ matrix.artifact_label }}/packages/
+          if-no-files-found: ignore
