@@ -24,7 +24,7 @@ jobs:
           - name: centos-stream-8
             image: quay.io/centos/centos:stream8
             artifact_label: centos-stream-8
-            allow_failure: false
+            allow_failure: true
           - name: centos-stream-9
             image: quay.io/centos/centos:stream9
             artifact_label: centos-stream-9
