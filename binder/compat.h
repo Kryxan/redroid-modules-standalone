@@ -195,6 +195,8 @@ static inline void compat_task_getsecid(struct task_struct *task, u32 *secid)
 /* ------------------------------------------------------------------ */
 /* Security binder: task-vs-cred API drift                            */
 /* ------------------------------------------------------------------ */
+#define COMPAT_HAS_BINDER_CRED 1
+
 typedef int (*compat_security_binder_set_context_mgr_task_t)(struct task_struct *);
 typedef int (*compat_security_binder_set_context_mgr_cred_t)(const struct cred *);
 typedef int (*compat_security_binder_two_task_t)(struct task_struct *, struct task_struct *);

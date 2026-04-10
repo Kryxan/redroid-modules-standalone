@@ -103,7 +103,10 @@ jobs:
             fi
 
             if [ -z "$KDIR" ]; then
-              KDIR="$(find /usr/src/kernels -maxdepth 1 -mindepth 1 -type d | sort -V | tail -n 1 || true)"
+              KDIR="$(find /usr/src/kernels -maxdepth 1 -mindepth 1 -type d -name "6.1*" | sort -V | tail -n 1 || true)"
+              if [ -z "$KDIR" ]; then
+                KDIR="$(find /usr/src/kernels -maxdepth 1 -mindepth 1 -type d | sort -V | tail -n 1 || true)"
+              fi
               if [ -n "$KDIR" ]; then
                 KVER="$(basename "$KDIR")"
               fi
