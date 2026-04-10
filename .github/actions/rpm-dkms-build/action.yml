@@ -203,6 +203,29 @@ runs:
                 fi
             else
                 "$PKG_MGR" -y update || true
+
+                if ! "$PKG_MGR" -y install dkms >/dev/null 2>&1; then
+                    case "$DISTRO_ID" in
+                        centos|rhel|rocky|almalinux|ol)
+                            "$PKG_MGR" -y install 'dnf-command(config-manager)' || true
+                            case "${DISTRO_VERSION_ID%%.*}" in
+                                9)
+                                    "$PKG_MGR" config-manager --set-enabled crb || true
+                                    "$PKG_MGR" -y install epel-release \
+                                        || "$PKG_MGR" -y install https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm \
+                                        || true
+                                    ;;
+                                8)
+                                    "$PKG_MGR" config-manager --set-enabled powertools || "$PKG_MGR" config-manager --set-enabled PowerTools || true
+                                    "$PKG_MGR" -y install epel-release \
+                                        || "$PKG_MGR" -y install https://dl.fedoraproject.org/pub/epel/epel-release-latest-8.noarch.rpm \
+                                        || true
+                                    ;;
+                            esac
+                            ;;
+                    esac
+                fi
+
                 install_required "$PKG_MGR" -y install gcc make git dkms kmod findutils which tar gzip sed elfutils-libelf-devel
                 install_optional "$PKG_MGR" -y install rpm-build kernel-devel-core
 
