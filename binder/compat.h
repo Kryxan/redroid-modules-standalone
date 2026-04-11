@@ -12,11 +12,29 @@
 
 #include <linux/version.h>
 #include <linux/fs.h>
+#include <linux/namei.h>
+
+/* ------------------------------------------------------------------ */
+/* Binderfs helper headers moved between pagemap.h and pseudo_fs.h    */
+/* ------------------------------------------------------------------ */
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 17, 0)
+#include <linux/pseudo_fs.h>
+#else
+#include <linux/pagemap.h>
+#endif
+
+/* ------------------------------------------------------------------ */
+/* module_param callbacks gained const struct kernel_param * in 5.0   */
+/* ------------------------------------------------------------------ */
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 0, 0)
+typedef struct kernel_param compat_kernel_param_t;
+#else
+typedef const struct kernel_param compat_kernel_param_t;
+#endif
 
 /* ------------------------------------------------------------------ */
 /* VFS: lookup_one_len -> lookup_one (6.12+)                          */
 /* ------------------------------------------------------------------ */
-#include <linux/namei.h>
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 12, 0)
 #include <linux/mnt_idmapping.h>
 static inline struct dentry *compat_lookup_one(struct dentry *parent,

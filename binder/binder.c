@@ -138,16 +138,8 @@ module_param_named(devices, binder_devices_param, charp, 0444);
 static DECLARE_WAIT_QUEUE_HEAD(binder_user_error_wait);
 static int binder_stop_on_user_error;
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 0, 0)
 static int binder_set_stop_on_user_error(const char *val,
-										 struct kernel_param *kp)
-#else
-static int binder_set_stop_on_user_error(const char *val,
-										 const struct kernel_param *kp)
-#endif
-{
-	int ret;
-
+									 compat_kernel_param_t *kp)
 	ret = param_set_int(val, kp);
 	if (binder_stop_on_user_error < 2)
 		wake_up(&binder_user_error_wait);
