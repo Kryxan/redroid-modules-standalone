@@ -226,6 +226,10 @@ runs:
             header_installed=""
             for pkg in "${header_candidates[@]}"; do
                 echo "Trying header package: ${pkg}"
+                if ! apt-cache show "$pkg" >/dev/null 2>&1; then
+                    echo "Package not available in current apt sources: ${pkg}"
+                    continue
+                fi
                 if as_root "$APT_CMD" install -y "$pkg"; then
                     header_installed="$pkg"
                     echo "Installed exact header package: ${pkg}"
@@ -234,23 +238,19 @@ runs:
             done
 
             if [ -z "$header_installed" ]; then
-                echo "::error::Unable to install exact kernel headers for ${KREL}. Tried: ${header_candidates[*]}" >&2
-                exit 1
-            fi
-
-            echo "=== installed header packages ==="
-            dpkg-query -W -f="\${binary:Package}\t\${Version}\n" "linux-headers*" "pve-headers*" 2>/dev/null | sort || true
-        ' | tee "$LOG_DIR/package-install.log" || {
-            HEADER_MISMATCH_PATTERN='(Unable to install exact kernel headers|Unable to locate package|Couldn.t find any package by regex|Couldn.t find any package by glob|has no installation candidate)'
-            if grep -Eqi "$HEADER_MISMATCH_PATTERN" "$LOG_DIR/package-install.log" 2>/dev/null; then
-                SKIPPED="true"
-                SKIP_REASON="debian-exact-headers-unavailable"
-                printf '%s\n' "$SKIP_REASON" > "$LOG_DIR/skip-reason.txt"
-                echo "::warning::Skipping $SAFE_LABEL because exact Debian-family headers for ${KREL} are not available in this CI environment."
+                echo "__DEB_DKMS_SKIP__:debian-exact-headers-unavailable:${KREL}"
             else
-                exit 1
+                echo "=== installed header packages ==="
+                dpkg-query -W -f="\${binary:Package}\t\${Version}\n" "linux-headers*" "pve-headers*" 2>/dev/null | sort || true
             fi
-        }
+        ' | tee "$LOG_DIR/package-install.log"
+
+        if grep -q '^__DEB_DKMS_SKIP__:' "$LOG_DIR/package-install.log" 2>/dev/null; then
+            SKIPPED="true"
+            SKIP_REASON="debian-exact-headers-unavailable"
+            printf '%s\n' "$SKIP_REASON" > "$LOG_DIR/skip-reason.txt"
+            echo "::warning::Skipping $SAFE_LABEL because exact Debian-family headers for ${KREL} are not available in this CI environment."
+        fi
 
         if [ "$SKIPPED" != "true" ]; then
             run_in_env '
