@@ -6,7 +6,7 @@ This repository uses **Semantic Versioning** with a single source of truth at th
 VERSION
 ```
 
-The file contains only:
+The file must contain only:
 
 ```text
 X.Y.Z
@@ -14,23 +14,80 @@ X.Y.Z
 
 No prefixes, suffixes, or extra text are allowed.
 
+## Core Inclusion Rule
+
+> **Any commit that changes behavior, adds features, fixes bugs, changes installer logic, updates kernel support, alters packaging output, modifies `ipcverify`, or changes CI/workflows in a way that affects shipped output must appear in the changelog and affect versioning.**
+
+This rule is based on **impact**, not on commit-message prefixes.
+
+### Included changes
+
+- feature commits
+- bug-fix commits
+- installer logic changes
+- kernel compatibility and support updates
+- CI/workflow changes that affect packaged or validated output
+- `ipcverify` additions and behavior changes
+- packaging changes
+- documentation changes that affect operator-visible behavior or release/install rules
+
+### Excluded changes
+
+- pure formatting
+- comment-only edits
+- README-only wording changes with no behavior impact
+- file creation/deletion that does not affect functionality
+
 ## Semantic Versioning Rules
 
 | Part | Increment when | Examples |
 | --- | --- | --- |
-| `MAJOR` | A kernel-facing behavior changes in a breaking way, a compatibility contract is intentionally dropped, or an installation/runtime expectation changes incompatibly | dropping old behavior, changing ioctl behavior, incompatible module-loading rules |
-| `MINOR` | New features, broader distro/kernel support, new installer capabilities, or newly supported kernels are added without breaking existing flows | adding support for a new Proxmox/Debian kernel family, new runtime checks, new packaging features |
-| `PATCH` | Bug fixes, CI fixes, packaging fixes, or compatibility shims that do not change the public behavior contract | compiler fixups, workflow fixes, small DKMS/install corrections |
+| `MAJOR` | A deliberate breaking redesign changes the public behavior contract in an incompatible way | incompatible installer redesign, dropped compatibility contract, intentional runtime break |
+| `MINOR` | New features, new kernels, new distro support, new installer capabilities, or new packaging/verification functionality are added without breaking existing flows | Amazon Linux support, new release packaging, new `ipcverify` capability |
+| `PATCH` | Fixes, corrections, small adjustments, or workflow/packaging changes that preserve the public behavior contract | compat fixes, workflow fixes, DKMS corrections, output-affecting CI fixes |
 
-## Current Baseline
+Repository policy remains **MAJOR = 2** unless a real breaking redesign is intentionally introduced.
 
-The standalone project baseline starts at:
+## Changelog and Version-Bump Logic
+
+1. Start from the previous semantic tag `vX.Y.Z`.
+2. If no tags exist yet, use the standalone-project baseline at `2.0.0` (`eb21159`).
+3. Scan all commits since that boundary.
+4. Exclude only the non-behavioral categories listed above.
+5. Classify every remaining commit as `MINOR` or `PATCH`.
+6. If the interval contains any `MINOR`-class change, the next release is the next `MINOR`.
+7. Otherwise, increment `PATCH` once per included behavior-changing commit.
+
+### Patch-series consolidation
+
+Versioning should **count each included patch commit**, but the changelog may **consolidate a consecutive patch run** under the resulting release heading for readability.
+
+Example:
+
+- `2.1.0` + six behavior-changing patch commits → changelog can summarize that run as **`2.1.6`**
+- the six fixes are still counted individually for versioning purposes
+
+## Historical Reconstruction for This Repo
+
+The current checked-in version is:
 
 ```text
-2.0.0
+2.3.0
 ```
 
-## Single Source of Truth
+The standalone-project history currently reconstructs as:
+
+| Version | Date | Reason |
+| --- | --- | --- |
+| `2.0.0` | `2026-03-31` | initial standalone import and baseline packaging |
+| `2.0.5` | `2026-03-31` | early CI/build/compatibility fixes after the standalone import |
+| `2.1.0` | `2026-03-31` | cross-compatibility updates across kernels and distros |
+| `2.1.6` | `2026-03-31` | six follow-up patch fixes for CI/runtime/compat stability |
+| `2.2.0` | `2026-04-07` | semver CI, runtime validation, and `.run` packaging improvements |
+| `2.2.2` | `2026-04-07` | two follow-up release/payload patch fixes |
+| `2.3.0` | `2026-04-10` | Amazon Linux and broader RPM-family workflow/compat expansion |
+
+## Single Source of Truth and Automation
 
 All release tooling reads the version from `VERSION`:
 
@@ -47,21 +104,9 @@ Helper scripts:
 - `scripts/validate-version.sh` — verifies that a tag matches `VERSION`
 - `scripts/bump-version.sh` — increments `major`, `minor`, or `patch`
 
-## DKMS and Module Packaging Rules
-
-1. The checked-in `dkms.conf` files are synchronized from `VERSION` during local DKMS install, CI packaging, and release bundle generation.
-2. `make dkms-install` synchronizes `PACKAGE_VERSION` from `VERSION` before calling DKMS.
-3. DKMS installs into:
-
-```text
-/lib/modules/<kernel>/updates/dkms/
-```
-
-instead of `extra/`, so updates are placed in the expected DKMS-managed path.
-
 ## Release Tag Rules
 
-Release tags must be exactly:
+When tags are created, they must be exactly:
 
 ```text
 vX.Y.Z
@@ -71,66 +116,9 @@ Examples:
 
 - `v2.0.0`
 - `v2.1.0`
-- `v2.1.3`
+- `v2.1.6`
 
 The release workflow reads `VERSION` first and fails if the pushed tag does not match the file.
-
-## Release Workflow Behavior
-
-The release workflow is triggered by:
-
-1. pushing a semantic tag `vX.Y.Z`
-2. running `workflow_dispatch`
-
-On each release run, CI:
-
-1. reads and validates `VERSION`
-2. validates that the git tag matches `VERSION`
-3. builds `binder_linux` and `ashmem_linux` for the kernel matrix
-4. stages per-kernel prebuilt bundles
-5. builds `redroid-modules-standalone-X.Y.Z.run`
-6. uploads artifacts
-7. publishes a GitHub Release with generated release notes and per-kernel assets
-
-## Version Bump Workflow
-
-The `version-bump.yml` workflow provides controlled semantic bumps.
-
-Inputs:
-
-- `major`
-- `minor`
-- `patch`
-
-The workflow:
-
-1. reads `VERSION`
-2. increments the selected field
-3. commits the updated `VERSION`
-4. creates tag `vX.Y.Z`
-5. pushes the commit and tag so the release workflow runs automatically
-
-## Kernel-Triggered Rebuilds and Prereleases
-
-New header discovery does **not** change semantic project versioning.
-
-When new kernel headers appear:
-
-1. the kernel rebuild workflow detects newly available headers
-2. it builds only the affected matrix targets from the latest `prerelease` branch if present, otherwise from the latest release tag
-3. successful preview artifacts are published to a prerelease channel
-4. `VERSION` is left unchanged
-5. if the build fails, an autopatch request is staged on `prerelease` with captured compiler errors for Copilot-assisted follow-up
-
-## `.run` Installer Version Embedding
-
-The installer generator reads `VERSION` and uses it for:
-
-- the installer filename: `redroid-modules-standalone-X.Y.Z.run`
-- the extracted bundle directory name
-- the copied `VERSION` file inside the release bundle
-- the generated `RELEASE_MANIFEST.txt`
-- the DKMS metadata bundled inside the installer
 
 ## Validation Expectations
 
@@ -142,4 +130,4 @@ Every versioned change should remain compatible with the existing validation pat
 - release matrix builds
 - kernel-triggered preview builds
 
-Compatibility-only kernel fixes should usually stay on the same semantic version unless they intentionally add new supported kernels or change behavior enough to justify a `MINOR` or `PATCH` increment.
+Compatibility-only kernel or workflow fixes should remain `PATCH` unless they intentionally add new supported behavior and justify a `MINOR` release.

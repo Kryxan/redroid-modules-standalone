@@ -1,0 +1,65 @@
+name: IPC Verify Android App
+
+on:
+    workflow_dispatch:
+
+permissions:
+    contents: read
+
+jobs:
+    build-ipcverify:
+        runs-on: ubuntu-latest
+
+        steps:
+            - name: Check out repository
+              uses: actions/checkout@v4
+
+            - name: Set up Java 17
+              uses: actions/setup-java@v4
+              with:
+                  distribution: temurin
+                  java-version: "17"
+
+            - name: Set up Gradle
+              uses: gradle/actions/setup-gradle@v4
+              with:
+                  gradle-version: "8.7"
+
+            - name: Set up Android SDK
+              uses: android-actions/setup-android@v3
+
+            - name: Install Android SDK packages
+              shell: bash
+              run: |
+                  set -euo pipefail
+                  yes | sdkmanager --licenses >/dev/null || true
+                  sdkmanager \
+                    "platforms;android-34" \
+                    "build-tools;34.0.0" \
+                    "platform-tools" \
+                    "cmake;3.22.1" \
+                    "ndk;26.3.11579264"
+
+            - name: Build host verifier
+              shell: bash
+              run: |
+                  set -euo pipefail
+                  make -C ipcverify host
+
+            - name: Build Android APK
+              shell: bash
+              env:
+                  ANDROID_SDK_ROOT: ${{ env.ANDROID_SDK_ROOT }}
+              run: |
+                  set -euo pipefail
+                  chmod +x ipcverify/build-android.sh
+                  ./ipcverify/build-android.sh
+
+            - name: Upload APK artifact
+              uses: actions/upload-artifact@v4
+              with:
+                  name: ipcverify-apk
+                  path: |
+                      bin/ipcverify.apk
+                      bin/ipcverify-host
+                  if-no-files-found: error

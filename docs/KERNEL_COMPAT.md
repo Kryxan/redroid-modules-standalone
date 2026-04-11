@@ -1,23 +1,20 @@
 # Kernel Compatibility Layer
 
-This project maintains out-of-tree `binder_linux` and `ashmem_linux` kernel modules
-for use with [redroid](https://github.com/remote-android/redroid-doc).  Kernel
-internal APIs change frequently; the **compat headers** centralise every
-version-gated adaptation in one place so that functional source files stay clean.
+This project keeps its Binder and Ashmem sources buildable across older and newer kernels by concentrating API drift in small compatibility shims instead of scattering `#ifdef` logic through the implementation files.
 
-## Compat headers
+## Key Compatibility Files
 
-| Header | Scope |
+| File | Purpose |
 | --- | --- |
-| `binder/compat.h` | binder, binderfs, binder_alloc |
-| `ashmem/compat.h` | ashmem |
+| `binder/compat.h` | Binder-facing shims for allocator, VFS, binderfs, and kernel API drift |
+| `ashmem/compat.h` | Ashmem-facing shims, especially `vm_flags_*()` handling and mm changes |
+| `binder/deps.c` / `ashmem/deps.c` | Dependency and symbol-presence glue for external-module builds |
 
-When a new kernel release breaks an API, fix it in the relevant `compat.h`
-rather than adding `#if LINUX_VERSION_CODE` blocks to functional code.
+When a new kernel release breaks an API, the rule is to extend the relevant `compat.h` first rather than forking functional logic.
 
-## API compatibility table
+## API Compatibility Table
 
-### binder/compat.h
+### `binder/compat.h`
 
 | Macro / function | Since | Description |
 | --- | --- | --- |
@@ -44,7 +41,7 @@ rather than adding `#if LINUX_VERSION_CODE` blocks to functional code.
 | `compat_vm_flags_set/clear()` | 6.3 | `vm_flags_set/clear` vs direct assignment |
 | `DEFINE_SHOW_ATTRIBUTE` | 4.16 | Backfill for very old kernels |
 
-### ashmem/compat.h
+### `ashmem/compat.h`
 
 | Macro / function | Since | Description |
 | --- | --- | --- |
@@ -55,30 +52,72 @@ rather than adding `#if LINUX_VERSION_CODE` blocks to functional code.
 | `compat_vm_flags_clear()` | 6.3 | `vm_flags_clear` vs direct assignment |
 | `vma_set_anonymous()` | 4.18 | Backfill |
 
-### deps.c (both modules)
+### `deps.c` in both modules
 
-The `deps.c` files use `kallsyms_lookup_name` (via kprobe on 5.7+) to resolve
-non-exported kernel symbols at runtime.  Version checks in `deps.c` are
-structural — they define which symbol name or function signature to look up and
-are **not** candidates for the compat headers.
+The `deps.c` files use `kallsyms_lookup_name` (via kprobe on 5.7+) to resolve non-exported kernel symbols at runtime. Those checks are structural and remain the right place for symbol-name discovery logic.
 
-## How to adapt to a new kernel
+## Runtime Detection and Presence Checks
 
-1. **Build** against the new kernel headers: `make KDIR=/path/to/headers`.
-2. If compilation fails, identify the broken API.
-3. Add a new compat entry in the appropriate `compat.h`.
-4. Replace the raw API call in functional code with the compat wrapper.
-5. Update this table.
+The current “presence service” is script-based rather than daemonized:
 
-## Notes for Proxmox 9 baseline
+- `scripts/detect-ipc-runtime.sh`
+- `scripts/verify-environment.sh`
+
+These checks drive CI summaries, support bundles, and local verification. They currently probe:
+
+- whether `binderfs` is supported by the running kernel
+- whether `binderfs` can be mounted (or is already mounted)
+- whether Binder device nodes are present (`/dev/binder`, `/dev/binderfs/*`)
+- whether Binder ioctl interactions succeed
+- whether Ashmem mmap behavior is available, or whether the host is expected to use memfd fallback
+
+Examples:
+
+```bash
+bash scripts/detect-ipc-runtime.sh --format json
+bash scripts/detect-ipc-runtime.sh --format keyvalue
+bash scripts/detect-ipc-runtime.sh --strict --format keyvalue
+```
+
+`--strict` exits non-zero if required runtime capabilities are missing.
+
+## Header Resolution Logic
+
+### Debian / Ubuntu / Proxmox families
+
+The release workflows and manual builds prefer the running-kernel header tree first:
+
+1. `/lib/modules/<uname -r>/build`
+2. distro-provided `linux-headers-*`
+3. Proxmox-specific `pve-headers` / `proxmox-headers`
+
+Proxmox kernels must use the Proxmox header packages; generic Debian headers are not enough.
+
+### RPM families
+
+The shared `.github/actions/rpm-dkms-build/action.yml` path standardizes header resolution for:
+
+- Fedora
+- Fedora Silverblue
+- RHEL / UBI / CentOS Stream
+- Amazon Linux 2
+- Amazon Linux 2023
+
+That action prefers the exact `kernel-devel-$(uname -r)` match, falls back to the closest available header tree when required, and records logs/artifacts when distro repositories lag the running kernel.
+
+## Distro-Specific Quirks
+
+- **Fedora / Silverblue:** some GitHub-hosted kernels can expose non-actionable external-module mismatches such as symbol export differences.
+- **RHEL / CentOS Stream:** enterprise repo enablement and mirror availability can affect exact header resolution.
+- **Amazon Linux 2 vs 2023:** the header and toolchain paths differ enough that they are handled as separate CI targets; AL2023 currently prefers the `6.1.*` branch when exact headers are not present.
+- **Secure Boot:** external modules may still require MOK enrollment before they can load.
+
+## Notes for the Proxmox Baseline
 
 1. `linux-headers-6.17.13-2-pve` is used as a local build reference.
-2. Treat binder live replacement as best-effort only on kernels where unload
- is unreliable; use reboot as the stable activation path.
-3. Prefer validating behavior with `make ci-test` and
- `scripts/detect-ipc-runtime.sh --strict` after module build.
+2. Treat Binder live replacement as best-effort only on kernels where unload is unreliable; reboot is the stable activation path.
+3. Prefer validating behavior with `make ci-test` and `scripts/detect-ipc-runtime.sh --strict` after a module build.
 
-## Minimum supported kernel
+## Minimum Supported Kernel
 
-The oldest guards target **4.16** (DEFINE_SHOW_ATTRIBUTE) and **4.18**
-(vma_set_anonymous).  In practice the modules are tested on **5.x – 6.17+**.
+The oldest guards target **4.16** (`DEFINE_SHOW_ATTRIBUTE`) and **4.18** (`vma_set_anonymous`). In practice the modules are validated on **5.x – 6.17+**.

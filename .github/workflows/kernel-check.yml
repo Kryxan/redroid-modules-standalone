@@ -87,76 +87,81 @@ jobs:
     needs: check
     if: needs.check.outputs.new_kernels == 'true' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
-    container:
-      image: "${{ matrix.image }}"
     strategy:
       fail-fast: false
       matrix:
         include:
+          - name: "Ubuntu 22.04"
+            label: "ubuntu-22.04"
+            image: "ubuntu:22.04"
+            apt_repo: ""
           - name: "Ubuntu 24.04"
+            label: "ubuntu-24.04"
             image: "ubuntu:24.04"
-            headers_pkg: "linux-headers-generic"
-            pre_install: ""
-          - name: "Debian trixie"
-            image: "debian:trixie"
-            headers_pkg: "linux-headers-amd64"
-            pre_install: ""
-          - name: "Proxmox 8"
+            apt_repo: ""
+          - name: "Debian 12"
+            label: "debian-12"
             image: "debian:12"
-            headers_pkg: "pve-headers"
-            pre_install: |
-              echo 'deb [trusted=yes] http://download.proxmox.com/debian/pve bookworm pve-no-subscription' > /etc/apt/sources.list.d/pve-install-repo.list
-          - name: "Proxmox 9"
+            apt_repo: ""
+          - name: "Debian 13"
+            label: "debian-13"
             image: "debian:trixie"
-            headers_pkg: "pve-headers"
-            pre_install: |
-              echo 'deb [trusted=yes] http://download.proxmox.com/debian/pve trixie pve-no-subscription' > /etc/apt/sources.list.d/pve-install-repo.list
+            apt_repo: ""
+          - name: "Proxmox 8"
+            label: "proxmox-8-pve"
+            image: "debian:12"
+            apt_repo: "deb [trusted=yes] http://download.proxmox.com/debian/pve bookworm pve-no-subscription"
+          - name: "Proxmox 9"
+            label: "proxmox-9-pve"
+            image: "debian:trixie"
+            apt_repo: "deb [trusted=yes] http://download.proxmox.com/debian/pve trixie pve-no-subscription"
     steps:
-      - name: Install deps
-        run: |
-          export DEBIAN_FRONTEND=noninteractive
-          if [ -n "${{ matrix.pre_install }}" ]; then
-            sh -ec "${{ matrix.pre_install }}"
-          fi
-          apt-get update -qq
-          apt-get install -y -qq --no-install-recommends \
-            build-essential kmod git python3 util-linux libelf1 ${{ matrix.headers_pkg }} 2>&1 | tail -5
-
       - uses: actions/checkout@v4
 
-      - name: Detect headers
-        id: kernel
-        run: |
-          KDIR=$(ls -d /lib/modules/*/build 2>/dev/null | sort -V | tail -1 || true)
-          if [ -z "$KDIR" ]; then
-            KDIR=$(find /usr/src -maxdepth 1 -type d -name 'linux-headers-*' \
-              ! -name '*-common' ! -name '*-common-*' \
-              | sort -V | tail -1 || true)
-          fi
-          if [ -z "$KDIR" ] || [ ! -f "$KDIR/Makefile" ]; then
-            echo "::error::No usable kernel headers found"
-            ls -la /lib/modules || true
-            ls -la /usr/src || true
-            exit 1
-          fi
-          if [ "$(basename "$KDIR")" = "build" ]; then
-            KVER=$(basename "$(dirname "$KDIR")")
-          else
-            KVER=$(basename "$KDIR" | sed 's/^linux-headers-//')
-          fi
-          echo "kdir=$KDIR" >> "$GITHUB_OUTPUT"
-          echo "kver=$KVER" >> "$GITHUB_OUTPUT"
+      - name: Build DKMS modules
+        id: dkms
+        uses: ./.github/actions/deb-dkms-build
+        with:
+          container-image: ${{ matrix.image }}
+          distro-label: ${{ matrix.label }}
+          apt-repo: ${{ matrix.apt_repo }}
 
-      - name: Build
-        run: make KERNEL_SRC="${{ steps.kernel.outputs.kdir }}" 2>&1
+      - name: Upload build logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.label }}-dkms-logs-${{ steps.dkms.outputs.kernel_version || 'unknown' }}
+          path: artifacts/${{ matrix.label }}/logs/
+          if-no-files-found: error
 
-      - name: Runtime verify
-        continue-on-error: true
-        run: make ci-test
+      - name: Upload module artifacts
+        if: steps.dkms.outputs.skipped != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.label }}-modules-${{ steps.dkms.outputs.kernel_version }}
+          path: artifacts/${{ matrix.label }}/modules/*.ko*
+          if-no-files-found: error
+
+      - name: Upload DKMS packages
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.label }}-dkms-packages-${{ steps.dkms.outputs.kernel_version || 'unknown' }}
+          path: artifacts/${{ matrix.label }}/packages/
+          if-no-files-found: ignore
+
+      - name: Report skipped environment
+        if: steps.dkms.outputs.skipped == 'true'
+        shell: bash
+        run: echo "Skipped ${{ matrix.name }} due to ${{ steps.dkms.outputs.skip_reason || 'a non-actionable exact-header CI mismatch' }}."
 
       - name: Report
         if: always()
+        shell: bash
         run: |
           echo "## Build result for ${{ matrix.name }}"
-          modinfo ashmem/ashmem_linux.ko 2>&1 || echo "ashmem: build failed"
-          modinfo binder/binder_linux.ko 2>&1 || echo "binder: build failed"
+          echo "distro_id=${{ steps.dkms.outputs.distro_id || 'unknown' }}"
+          echo "kernel_version=${{ steps.dkms.outputs.kernel_version || 'unknown' }}"
+          echo "skipped=${{ steps.dkms.outputs.skipped || 'false' }}"
+          echo "skip_reason=${{ steps.dkms.outputs.skip_reason || '' }}"
+          echo "artifacts_path=${{ steps.dkms.outputs.artifacts_path || format('artifacts/{0}', matrix.label) }}"

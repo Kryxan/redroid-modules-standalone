@@ -1,57 +1,57 @@
 name: Build and Validate (Amazon Linux 2023)
 
 on:
-  push:
-    branches: [main, master]
-    paths-ignore: ["**/*.md", "docs/**"]
-  pull_request:
-    branches: [main, master]
-    paths-ignore: ["**/*.md", "docs/**"]
-  workflow_dispatch:
+    push:
+        branches: [main, master]
+        paths-ignore: ["**/*.md", "docs/**"]
+    pull_request:
+        branches: [main, master]
+        paths-ignore: ["**/*.md", "docs/**"]
+    workflow_dispatch:
 
 permissions:
-  contents: read
+    contents: read
 
 jobs:
-  amazonlinux2023:
-    name: amazonlinux-2023-kernel-6.x-dkms
-    runs-on: ubuntu-latest
+    amazonlinux2023:
+        name: amazonlinux-2023-kernel-6.x-dkms
+        runs-on: ubuntu-latest
 
-    steps:
-      - uses: actions/checkout@v4
+        steps:
+            - uses: actions/checkout@v4
 
-      - name: Build DKMS modules
-        id: dkms
-        uses: ./.github/actions/rpm-dkms-build
-        with:
-          container-image: amazonlinux:2023
-          distro-label: amazonlinux2023
+            - name: Build DKMS modules
+              id: dkms
+              uses: ./.github/actions/rpm-dkms-build
+              with:
+                  container-image: amazonlinux:2023
+                  distro-label: amazonlinux2023
 
-      - name: Upload build logs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: amazonlinux2023-dkms-logs-${{ steps.dkms.outputs.kernel_version || 'unknown' }}
-          path: artifacts/amazonlinux2023/logs/
-          if-no-files-found: error
+            - name: Upload build logs
+              if: always()
+              uses: actions/upload-artifact@v4
+              with:
+                  name: amazonlinux2023-dkms-logs-${{ steps.dkms.outputs.kernel_version || 'unknown' }}
+                  path: artifacts/amazonlinux2023/logs/
+                  if-no-files-found: error
 
-      - name: Upload module artifacts
-        if: steps.dkms.outputs.skipped != 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: amazonlinux2023-modules-${{ steps.dkms.outputs.kernel_version }}
-          path: artifacts/amazonlinux2023/modules/*.ko
-          if-no-files-found: error
+            - name: Upload module artifacts
+              if: steps.dkms.outputs.skipped != 'true'
+              uses: actions/upload-artifact@v4
+              with:
+                  name: amazonlinux2023-modules-${{ steps.dkms.outputs.kernel_version }}
+                  path: artifacts/amazonlinux2023/modules/*.ko
+                  if-no-files-found: error
 
-      - name: Upload DKMS packages
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: amazonlinux2023-dkms-packages-${{ steps.dkms.outputs.kernel_version || 'unknown' }}
-          path: artifacts/amazonlinux2023/packages/
-          if-no-files-found: ignore
+            - name: Upload DKMS packages
+              if: always()
+              uses: actions/upload-artifact@v4
+              with:
+                  name: amazonlinux2023-dkms-packages-${{ steps.dkms.outputs.kernel_version || 'unknown' }}
+                  path: artifacts/amazonlinux2023/packages/
+                  if-no-files-found: ignore
 
-      - name: Report skipped environment
-        if: steps.dkms.outputs.skipped == 'true'
-        shell: bash
-        run: echo "Skipped amazonlinux-2023-kernel-6.x-dkms due to ${{ steps.dkms.outputs.skip_reason || 'a non-actionable CI environment mismatch' }}."
+            - name: Report skipped environment
+              if: steps.dkms.outputs.skipped == 'true'
+              shell: bash
+              run: echo "Skipped amazonlinux-2023-kernel-6.x-dkms due to ${{ steps.dkms.outputs.skip_reason || 'a non-actionable CI environment mismatch' }}."

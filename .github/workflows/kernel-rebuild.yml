@@ -259,13 +259,13 @@ jobs:
                   KVER="${{ steps.kernel.outputs.kver }}"
                   mkdir -p dist/logs dist/prebuilt/"$KVER" dist/kernel-bundles
                   status=0
-                  make KERNEL_SRC="${{ steps.kernel.outputs.kdir }}" 2>&1 | tee "dist/logs/${{ matrix.target.name }}.log" || status=$?
+                  make modules KERNEL_SRC="${{ steps.kernel.outputs.kdir }}" 2>&1 | tee "dist/logs/${{ matrix.target.name }}.log" || status=$?
                   echo "status=$status" >> "$GITHUB_OUTPUT"
                   if [ "$status" -eq 0 ]; then
-                    make -C test all
+                    make -C ipcverify host OUTPUT_DIR="$(pwd)/bin"
                     cp binder/binder_linux.ko "dist/prebuilt/$KVER/binder_linux.ko"
                     cp ashmem/ashmem_linux.ko "dist/prebuilt/$KVER/ashmem_linux.ko"
-                    cp test/test_ipc "dist/prebuilt/$KVER/test_ipc"
+                    cp bin/ipcverify-host "dist/prebuilt/$KVER/ipcverify-host"
                     cp VERSION "dist/prebuilt/$KVER/VERSION"
                     printf '%s\n' "$KVER" > "dist/prebuilt/$KVER/KERNEL"
                     sha256sum "dist/prebuilt/$KVER/"* > "dist/prebuilt/$KVER/SHA256SUMS"
@@ -343,13 +343,43 @@ jobs:
                     find "$artifact_dir" -type f -name '*.log' -exec cp {} dist/github-release/ \;
                   done
 
+            - name: Set up Java 17 for Android build
+              uses: actions/setup-java@v4
+              with:
+                  distribution: temurin
+                  java-version: "17"
+
+            - name: Set up Gradle
+              uses: gradle/actions/setup-gradle@v4
+              with:
+                  gradle-version: "8.7"
+
+            - name: Set up Android SDK
+              uses: android-actions/setup-android@v3
+
+            - name: Install Android SDK packages
+              shell: bash
+              run: |
+                  set -euo pipefail
+                  yes | sdkmanager --licenses >/dev/null || true
+                  sdkmanager \
+                    "platforms;android-34" \
+                    "build-tools;34.0.0" \
+                    "platform-tools" \
+                    "cmake;3.22.1" \
+                    "ndk;26.1.10909125"
+
             - name: Build prerelease installer
               shell: bash
               run: |
                   set -euo pipefail
+                  make -C ipcverify host OUTPUT_DIR="$(pwd)/bin"
+                  make -C ipcverify android OUTPUT_DIR="$(pwd)/bin"
                   chmod +x scripts/build-release-bundle.sh
-                  scripts/build-release-bundle.sh --version "${{ needs.discover.outputs.version }}" --prebuilt-root "$(pwd)/dist/prebuilt" --output-dir "$(pwd)/dist"
+                  scripts/build-release-bundle.sh --version "${{ needs.discover.outputs.version }}" --prebuilt-root "$(pwd)/dist/prebuilt" --output-dir "$(pwd)/bin"
                   cp dist/kernel-bundles/*.tar.gz dist/github-release/ 2>/dev/null || true
+                  cp bin/ipcverify-host dist/github-release/ipcverify-host
+                  cp bin/ipcverify.apk dist/github-release/ipcverify.apk
                   for kdir in dist/prebuilt/*; do
                     [ -d "$kdir" ] || continue
                     kver="$(basename "$kdir")"
@@ -374,6 +404,8 @@ jobs:
                       ${{ needs.discover.outputs.report }}
                       ```
                   files: |
-                      dist/*.run
+                      bin/*.run
+                      bin/ipcverify-host
+                      bin/ipcverify.apk
                       dist/github-release/*
-                      dist/release-layout.txt
+                      bin/release-layout.txt

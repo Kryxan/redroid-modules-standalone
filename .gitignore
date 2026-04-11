@@ -19,11 +19,9 @@ modules.order
 *.unsigned
 
 # Binaries
-test/binder_test
-test/ashmem_test
-test/test_ipc
-test/*.out
-test/*.exe
+bin/
+*.out
+*.exe
 
 # Logs
 build.log
@@ -31,11 +29,16 @@ build.log
 
 # Build artifacts
 dist/
+*.apk
 *.deb
 *.ddeb
 *.changes
 *.buildinfo
 *.tar.gz
+ipcverify/.gradle/
+ipcverify/build/
+ipcverify/app/build/
+ipcverify/local.properties
 
 # Coverage / analysis artifacts
 coverage/
@@ -49,6 +52,8 @@ clang-tidy-*.txt
 .cache/
 .ccache/
 .tmp-actions/
+.validate-*.sh
+.local/
 
 # Editors and OS files
 .vscode/

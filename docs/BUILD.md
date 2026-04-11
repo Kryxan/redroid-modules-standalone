@@ -1,126 +1,103 @@
-# build
+# Build Guide
 
-If you have a custom kernel, not yet targetted kernel, or wish to build the modules yourself.
+## Quick Start
 
-Extract the packaged modules and source code
-
-```bash
-# Extract only, without installing
-./redroid-modules-standalone-<version>.run --extract-only --target /redroid-release
-```
-
-Install build dependencies and kernel headers.
+### Build the modules from the repo
 
 ```bash
-sudo apt-get update
-sudo apt-get install -y build-essential kmod dkms linux-headers-$(uname -r)
-```
-
-Build, Install, and load modules.
-
-```bash
-make
+make modules
 sudo make install
 sudo ./load_modules.sh
 ```
 
-Run userspace validation tests.
+### Build the full release-style bundle
 
 ```bash
-make -C test run-all
+make all
 ```
 
-## Distro-Specific Setup
+That stages the following under `bin/`:
 
-### Fedora (latest)
+- `binder_linux.ko`
+- `ashmem_linux.ko`
+- `ipcverify-host`
+- `ipcverify.apk`
+- `redroid-modules-standalone-<version>.run`
+
+### Extract a release without installing it
 
 ```bash
-sudo dnf install -y make gcc clang kmod dkms kernel-devel-$(uname -r)
+./redroid-modules-standalone-<version>.run --extract-only --target /tmp/redroid-release
 ```
 
-On Fedora, `kernel-devel-$(uname -r)` is preferred because it matches the running kernel ABI. If that exact package is unavailable, use `kernel-devel` and build against the selected headers via `KERNEL_SRC`.
+## DKMS Fallback Builds
 
-### Fedora Silverblue
+The repository and the extracted `.run` bundle both support DKMS fallback when no exact prebuilt module exists.
 
-Silverblue is immutable. Use one of these approaches:
-
-Layer headers on host:
+### From the repository
 
 ```bash
-sudo rpm-ostree install kernel-devel
-sudo systemctl reboot
+sudo apt-get update
+sudo apt-get install -y dkms make gcc kmod linux-headers-$(uname -r)
+sudo make dkms-install
+sudo ./load_modules.sh
 ```
 
-Build inside toolbox:
+`make dkms-install` keeps `PACKAGE_VERSION` synchronized with the root `VERSION` file before it calls DKMS.
+
+### From an extracted `.run` bundle
 
 ```bash
-toolbox create
-toolbox enter
-sudo dnf install -y make gcc clang kmod kernel-devel
+./redroid-modules-standalone-<version>.run --extract-only --target /tmp/redroid-release
+sudo sh /tmp/redroid-release/redroid-modules-standalone/install.sh --yes
 ```
 
-### RHEL / CentOS Stream (8, 9)
+Behavior:
+
+1. Matching `prebuilt/<uname -r>/` modules are preferred.
+2. Bundled DKMS sources are used only when no exact prebuilt match exists.
+3. `--no-dkms` refuses fallback.
+4. `--skip-test` skips the post-install `ipcverify-host` run.
+
+## Build `ipcverify`
 
 ```bash
-sudo yum install -y kernel-devel-$(uname -r)
+make ipcverify-host
+make ipcverify-android
+./bin/ipcverify-host --local-only --yes
+./bin/ipcverify-host --verify-android --yes
 ```
 
-On RHEL-compatible systems, header packages may trail the running kernel. When exact `kernel-devel-$(uname -r)` is unavailable, install generic `kernel-devel` and point `KERNEL_SRC` to a valid headers tree.
+`make ipcverify-android` requires Java 17, Gradle 8.x, and `ANDROID_SDK_ROOT` configured with Android 34 / build-tools 34.
 
-### Proxmox VE 8 and 9
+## Distro-Specific Header Setup
 
-Workflows include explicit Proxmox repository setup and `pve-headers`
-installation paths for:
+| Distro family | Recommended header package path | Notes |
+| --- | --- | --- |
+| Ubuntu / Debian | `linux-headers-$(uname -r)` or distro generic headers | Release CI currently builds prebuilt assets for Ubuntu 24.04, Debian 12, and Debian 13 |
+| Proxmox VE 8 / 9 | `pve-headers` (or `proxmox-headers`) | Use Proxmox repos; Debian generic headers are not enough |
+| Fedora | `kernel-devel-$(uname -r)` first, then `kernel-devel` | Exact ABI match is preferred |
+| Fedora Silverblue | `rpm-ostree install kernel-devel` or build in toolbox | Immutable hosts need live layering or toolbox |
+| RHEL / CentOS Stream | `kernel-devel-$(uname -r)` first, then generic `kernel-devel` | Enterprise repos can lag the running kernel |
+| Amazon Linux 2 | `kernel-devel-$(uname -r)` first, then generic packages | Older 4.14-era quirks are handled in compat code |
+| Amazon Linux 2023 | prefer the `6.1.*` kernel-devel/header set when exact running-kernel headers are missing | Current CI explicitly handles this branch |
 
-1. Proxmox 8 (bookworm)
-2. Proxmox 9 (trixie)
-
-## Runtime Verification
-
-The repository includes a unified runtime detector for binderfs, binder devices, binder ioctl support, and ashmem mmap behavior.
+## Validate the Runtime
 
 ```bash
-# JSON output
-bash scripts/detect-ipc-runtime.sh
-
-# key=value output
-bash scripts/detect-ipc-runtime.sh --format keyvalue
-
-# fail on missing runtime capabilities
+make ci-check
+make verify
+make ci-test
+bash scripts/detect-ipc-runtime.sh --format json
 bash scripts/detect-ipc-runtime.sh --strict --format keyvalue
 ```
 
-The helper below is used by `make verify` and CI:
+`make ci-test` intentionally avoids install/remove side effects. It uses `scripts/verify-environment.sh`, while `ipcverify-host` is the standalone idempotent verifier.
+
+## Support Bundle
 
 ```bash
-bash scripts/verify-environment.sh --format keyvalue
+make support-bundle
 ```
 
-## Build and Test
-
-```bash
-make                    # build kernel modules
-make ci-check           # compat and guard checks
-make verify             # runtime environment detection (binderfs/binder/ashmem)
-make ci-test            # CI runtime checks without install side effects
-make -C test all        # build all userspace tests
-sudo make -C test run-all
-```
-
-`make ci-test` intentionally does not install or remove modules. It validates the current runtime environment via `scripts/verify-environment.sh`.
-
-Binder module replacement behavior varies by kernel. On some kernels (including recent Proxmox variants), `binder_linux` may not unload cleanly even with refcount 0. In those cases, updates are staged on disk and activated on reboot.
-
-## Kernel Header and Signing Quirks
-
-1. Fedora / Silverblue: kernel-devel packages are tightly coupled to kernel ABI.
-2. RHEL / CentOS Stream: exact running-kernel headers can be unavailable in some repos.
-3. Proxmox: use `pve-headers` from Proxmox repositories; Debian generic headers are insufficient.
-4. Secure Boot systems may require module signing enrollment (MOK) before modules can load.
-
-The combined test program `test/test_ipc.c` validates:
-
-- binderfs mount and device behavior
-- binder ioctls and buffer mapping
-- ashmem ioctls, mapping, pin/unpin, and sharing behavior
-- relevant sysfs/debugfs runtime visibility
+This produces an `ipcverify-support-<date-time>.tar.gz` archive with runtime detector output, module information, and recent verification logs.

@@ -204,56 +204,56 @@ typedef int (*compat_security_binder_two_cred_t)(const struct cred *, const stru
 typedef int (*compat_security_binder_file_task_t)(struct task_struct *, struct task_struct *, struct file *);
 typedef int (*compat_security_binder_file_cred_t)(const struct cred *, const struct cred *, struct file *);
 
-#define compat_security_binder_set_context_mgr(proc)                                        \
-    ({                                                                                      \
-        int __ret;                                                                          \
-        if (__builtin_types_compatible_p(typeof(&security_binder_set_context_mgr),          \
-                                         compat_security_binder_set_context_mgr_cred_t))    \
-            __ret = ((compat_security_binder_set_context_mgr_cred_t)                        \
-                         security_binder_set_context_mgr)((proc)->cred);                    \
-        else                                                                                \
-            __ret = ((compat_security_binder_set_context_mgr_task_t)                        \
-                         security_binder_set_context_mgr)((proc)->tsk);                     \
-        __ret;                                                                              \
+#define compat_security_binder_set_context_mgr(proc)                                     \
+    ({                                                                                   \
+        int __ret;                                                                       \
+        if (__builtin_types_compatible_p(typeof(&security_binder_set_context_mgr),       \
+                                         compat_security_binder_set_context_mgr_cred_t)) \
+            __ret = ((compat_security_binder_set_context_mgr_cred_t)                     \
+                         security_binder_set_context_mgr)((proc)->cred);                 \
+        else                                                                             \
+            __ret = ((compat_security_binder_set_context_mgr_task_t)                     \
+                         security_binder_set_context_mgr)((proc)->tsk);                  \
+        __ret;                                                                           \
     })
 
-#define compat_security_binder_transaction(from_proc, to_proc)                              \
-    ({                                                                                      \
-        int __ret;                                                                          \
-        if (__builtin_types_compatible_p(typeof(&security_binder_transaction),              \
-                                         compat_security_binder_two_cred_t))                \
-            __ret = ((compat_security_binder_two_cred_t)security_binder_transaction)(       \
-                (from_proc)->cred, (to_proc)->cred);                                        \
-        else                                                                                \
-            __ret = ((compat_security_binder_two_task_t)security_binder_transaction)(       \
-                (from_proc)->tsk, (to_proc)->tsk);                                          \
-        __ret;                                                                              \
+#define compat_security_binder_transaction(from_proc, to_proc)                        \
+    ({                                                                                \
+        int __ret;                                                                    \
+        if (__builtin_types_compatible_p(typeof(&security_binder_transaction),        \
+                                         compat_security_binder_two_cred_t))          \
+            __ret = ((compat_security_binder_two_cred_t)security_binder_transaction)( \
+                (from_proc)->cred, (to_proc)->cred);                                  \
+        else                                                                          \
+            __ret = ((compat_security_binder_two_task_t)security_binder_transaction)( \
+                (from_proc)->tsk, (to_proc)->tsk);                                    \
+        __ret;                                                                        \
     })
 
-#define compat_security_binder_transfer_binder(from_proc, to_proc)                          \
-    ({                                                                                      \
-        int __ret;                                                                          \
-        if (__builtin_types_compatible_p(typeof(&security_binder_transfer_binder),          \
-                                         compat_security_binder_two_cred_t))                \
-            __ret = ((compat_security_binder_two_cred_t)security_binder_transfer_binder)(   \
-                (from_proc)->cred, (to_proc)->cred);                                        \
-        else                                                                                \
-            __ret = ((compat_security_binder_two_task_t)security_binder_transfer_binder)(   \
-                (from_proc)->tsk, (to_proc)->tsk);                                          \
-        __ret;                                                                              \
+#define compat_security_binder_transfer_binder(from_proc, to_proc)                        \
+    ({                                                                                    \
+        int __ret;                                                                        \
+        if (__builtin_types_compatible_p(typeof(&security_binder_transfer_binder),        \
+                                         compat_security_binder_two_cred_t))              \
+            __ret = ((compat_security_binder_two_cred_t)security_binder_transfer_binder)( \
+                (from_proc)->cred, (to_proc)->cred);                                      \
+        else                                                                              \
+            __ret = ((compat_security_binder_two_task_t)security_binder_transfer_binder)( \
+                (from_proc)->tsk, (to_proc)->tsk);                                        \
+        __ret;                                                                            \
     })
 
-#define compat_security_binder_transfer_file(from_proc, to_proc, file)                      \
-    ({                                                                                      \
-        int __ret;                                                                          \
-        if (__builtin_types_compatible_p(typeof(&security_binder_transfer_file),            \
-                                         compat_security_binder_file_cred_t))               \
-            __ret = ((compat_security_binder_file_cred_t)security_binder_transfer_file)(    \
-                (from_proc)->cred, (to_proc)->cred, (file));                                \
-        else                                                                                \
-            __ret = ((compat_security_binder_file_task_t)security_binder_transfer_file)(    \
-                (from_proc)->tsk, (to_proc)->tsk, (file));                                  \
-        __ret;                                                                              \
+#define compat_security_binder_transfer_file(from_proc, to_proc, file)                   \
+    ({                                                                                   \
+        int __ret;                                                                       \
+        if (__builtin_types_compatible_p(typeof(&security_binder_transfer_file),         \
+                                         compat_security_binder_file_cred_t))            \
+            __ret = ((compat_security_binder_file_cred_t)security_binder_transfer_file)( \
+                (from_proc)->cred, (to_proc)->cred, (file));                             \
+        else                                                                             \
+            __ret = ((compat_security_binder_file_task_t)security_binder_transfer_file)( \
+                (from_proc)->tsk, (to_proc)->tsk, (file));                               \
+        __ret;                                                                           \
     })
 
 /* ------------------------------------------------------------------ */

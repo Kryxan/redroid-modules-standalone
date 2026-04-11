@@ -1,0 +1,418 @@
+name: Debian DKMS Build
+
+description: >-
+  Standardized DKMS build pipeline for redroid binder + ashmem modules across
+  Debian-family Linux distributions, with explicit logging, exact header
+  resolution, module verification, and artifact staging.
+
+inputs:
+  container-image:
+    description: Optional Debian/Ubuntu container image to run the build inside.
+    required: false
+    default: ""
+  distro-label:
+    description: Optional label used when staging artifacts under ./artifacts/.
+    required: false
+    default: ""
+  apt-repo:
+    description: Optional extra apt source line to add before installing packages (used for Proxmox repositories, etc.).
+    required: false
+    default: ""
+  workdir:
+    description: Repository-relative working directory that contains VERSION, binder/, and ashmem/.
+    required: false
+    default: "."
+  package-artifacts:
+    description: Attempt DKMS Debian package export when the backend is available.
+    required: false
+    default: "true"
+
+outputs:
+  artifacts_path:
+    description: Path to the staged module, log, and package artifacts.
+    value: ${{ steps.build.outputs.artifacts_path }}
+  kernel_version:
+    description: Kernel version selected for the DKMS build.
+    value: ${{ steps.build.outputs.kernel_version }}
+  distro_id:
+    description: Distribution ID detected from /etc/os-release.
+    value: ${{ steps.build.outputs.distro_id }}
+  skipped:
+    description: Whether the build was intentionally skipped due to a non-actionable CI environment mismatch.
+    value: ${{ steps.build.outputs.skipped }}
+  skip_reason:
+    description: Reason for a successful skip when skipped=true.
+    value: ${{ steps.build.outputs.skip_reason }}
+
+runs:
+  using: composite
+  steps:
+    - name: Build Debian-family DKMS artifacts
+      id: build
+      shell: bash
+      env:
+        INPUT_CONTAINER_IMAGE: ${{ inputs.container-image }}
+        INPUT_DISTRO_LABEL: ${{ inputs.distro-label }}
+        INPUT_APT_REPO: ${{ inputs.apt-repo }}
+        INPUT_WORKDIR: ${{ inputs.workdir }}
+        INPUT_PACKAGE_ARTIFACTS: ${{ inputs.package-artifacts }}
+      run: |
+        set -euo pipefail
+
+        cat > "$RUNNER_TEMP/deb-dkms-build.sh" <<'SCRIPT'
+        #!/usr/bin/env bash
+        set -euo pipefail
+
+        log() {
+            printf '[deb-dkms-build] %s\n' "$*"
+        }
+
+        fail() {
+            echo "::error::$*"
+            exit 1
+        }
+
+        slugify() {
+            printf '%s' "$1" \
+                | tr '[:upper:]' '[:lower:]' \
+                | sed -E 's/[^a-z0-9._-]+/-/g; s/^-+//; s/-+$//; s/-{2,}/-/g'
+        }
+
+        read_dkms_value() {
+            local file="$1"
+            local key="$2"
+            sed -nE "s/^${key}=\"([^\"]*)\".*/\1/p" "$file" | head -n 1
+        }
+
+        ROOT_DIR="$GITHUB_WORKSPACE"
+        if [ -n "${INPUT_WORKDIR:-}" ] && [ "${INPUT_WORKDIR}" != "." ]; then
+            ROOT_DIR="$(cd "$GITHUB_WORKSPACE/$INPUT_WORKDIR" && pwd)"
+        fi
+        cd "$ROOT_DIR"
+
+        BUILD_CONTAINER_NAME=""
+        if [ -n "${INPUT_CONTAINER_IMAGE:-}" ]; then
+            BUILD_CONTAINER_NAME="deb-dkms-$(date +%s)-$$"
+            log "Starting build container ${INPUT_CONTAINER_IMAGE}"
+            docker pull "$INPUT_CONTAINER_IMAGE"
+            docker rm -f "$BUILD_CONTAINER_NAME" >/dev/null 2>&1 || true
+            docker run -d \
+                --name "$BUILD_CONTAINER_NAME" \
+                -v "$ROOT_DIR":/workspace \
+                -w /workspace \
+                "$INPUT_CONTAINER_IMAGE" \
+                tail -f /dev/null >/dev/null
+        fi
+
+        cleanup() {
+            if [ -n "$BUILD_CONTAINER_NAME" ]; then
+                docker rm -f "$BUILD_CONTAINER_NAME" >/dev/null 2>&1 || true
+            fi
+        }
+        trap cleanup EXIT
+
+        SAFE_LABEL="deb-dkms"
+        ARTIFACTS_REL="artifacts/$SAFE_LABEL"
+        APT_CMD=""
+        DISTRO_ID="unknown"
+        DISTRO_VERSION_ID="unknown"
+        KREL=""
+        VERSION=""
+        KDIR=""
+        BINDER_PACKAGE=""
+        ASHMEM_PACKAGE=""
+        SKIPPED="false"
+        SKIP_REASON=""
+
+        run_in_env() {
+            local script="$1"
+            if [ -n "$BUILD_CONTAINER_NAME" ]; then
+                docker exec \
+                    -e CI=1 \
+                    -e GITHUB_ACTIONS=1 \
+                    -e SAFE_LABEL="$SAFE_LABEL" \
+                    -e ARTIFACTS_REL="$ARTIFACTS_REL" \
+                    -e APT_CMD="${APT_CMD:-}" \
+                    -e INPUT_APT_REPO="${INPUT_APT_REPO:-}" \
+                    -e DISTRO_ID="${DISTRO_ID:-unknown}" \
+                    -e DISTRO_VERSION_ID="${DISTRO_VERSION_ID:-unknown}" \
+                    -e KREL="${KREL:-}" \
+                    -e VERSION="${VERSION:-}" \
+                    -e KDIR="${KDIR:-}" \
+                    -e BINDER_PACKAGE="${BINDER_PACKAGE:-}" \
+                    -e ASHMEM_PACKAGE="${ASHMEM_PACKAGE:-}" \
+                    -w /workspace \
+                    "$BUILD_CONTAINER_NAME" \
+                    bash -lc "$script"
+            else
+                SAFE_LABEL="$SAFE_LABEL" \
+                ARTIFACTS_REL="$ARTIFACTS_REL" \
+                APT_CMD="${APT_CMD:-}" \
+                INPUT_APT_REPO="${INPUT_APT_REPO:-}" \
+                DISTRO_ID="${DISTRO_ID:-unknown}" \
+                DISTRO_VERSION_ID="${DISTRO_VERSION_ID:-unknown}" \
+                KREL="${KREL:-}" \
+                VERSION="${VERSION:-}" \
+                KDIR="${KDIR:-}" \
+                BINDER_PACKAGE="${BINDER_PACKAGE:-}" \
+                ASHMEM_PACKAGE="${ASHMEM_PACKAGE:-}" \
+                bash -lc "$script"
+            fi
+        }
+
+        DISTRO_ID="$(run_in_env '. /etc/os-release >/dev/null 2>&1 || true; printf "%s" "${ID:-unknown}"')"
+        DISTRO_VERSION_ID="$(run_in_env '. /etc/os-release >/dev/null 2>&1 || true; printf "%s" "${VERSION_ID:-unknown}"')"
+        KREL="$(run_in_env 'uname -r')"
+        SAFE_LABEL="$(slugify "${INPUT_DISTRO_LABEL:-$DISTRO_ID}")"
+        [ -n "$SAFE_LABEL" ] || SAFE_LABEL="deb-dkms"
+        ARTIFACTS_REL="artifacts/$SAFE_LABEL"
+        ARTIFACTS_PATH="$ROOT_DIR/$ARTIFACTS_REL"
+        LOG_DIR="$ARTIFACTS_PATH/logs"
+        MODULE_DIR="$ARTIFACTS_PATH/modules"
+        PACKAGE_DIR="$ARTIFACTS_PATH/packages"
+        STAGING_DIR="$ARTIFACTS_PATH/dkms-src"
+        mkdir -p "$LOG_DIR" "$MODULE_DIR" "$PACKAGE_DIR"
+
+        log "Repository root: $ROOT_DIR"
+        log "Detected distro: ${DISTRO_ID:-unknown} ${DISTRO_VERSION_ID:-unknown}"
+        log "Detected kernel: $KREL"
+
+        run_in_env '
+            set -euo pipefail
+            echo "=== uname -a ==="
+            uname -a
+            echo
+            echo "=== /etc/os-release ==="
+            cat /etc/os-release
+        ' | tee "$LOG_DIR/environment.log"
+
+        APT_CMD="$(run_in_env 'if command -v apt-get >/dev/null 2>&1; then echo apt-get; elif command -v apt >/dev/null 2>&1; then echo apt; else echo none; fi')"
+        [ "$APT_CMD" != "none" ] || fail "No supported Debian-family package manager found (expected apt-get or apt)."
+        log "Using package manager: $APT_CMD"
+
+        run_in_env '
+            set -euo pipefail
+
+            as_root() {
+                if [ "$(id -u)" -eq 0 ]; then
+                    "$@"
+                else
+                    sudo "$@"
+                fi
+            }
+
+            export DEBIAN_FRONTEND=noninteractive
+
+            echo "=== selected package manager ==="
+            command -v "$APT_CMD"
+
+            if [ -n "${INPUT_APT_REPO:-}" ]; then
+                echo "=== extra apt source ==="
+                printf '%s\n' "$INPUT_APT_REPO" | as_root tee /etc/apt/sources.list.d/redroid-extra.list >/dev/null
+                cat /etc/apt/sources.list.d/redroid-extra.list
+            fi
+
+            as_root "$APT_CMD" update
+            as_root "$APT_CMD" install -y build-essential dkms git make gcc kmod findutils sed tar gzip
+
+            declare -a header_candidates
+            header_candidates=("linux-headers-${KREL}")
+            case "$KREL" in
+                *-pve)
+                    header_candidates+=("pve-headers-${KREL}")
+                    ;;
+            esac
+
+            header_installed=""
+            for pkg in "${header_candidates[@]}"; do
+                echo "Trying header package: ${pkg}"
+                if as_root "$APT_CMD" install -y "$pkg"; then
+                    header_installed="$pkg"
+                    echo "Installed exact header package: ${pkg}"
+                    break
+                fi
+            done
+
+            if [ -z "$header_installed" ]; then
+                echo "::error::Unable to install exact kernel headers for ${KREL}. Tried: ${header_candidates[*]}" >&2
+                exit 1
+            fi
+
+            echo "=== installed header packages ==="
+            dpkg-query -W -f="\${binary:Package}\t\${Version}\n" "linux-headers*" "pve-headers*" 2>/dev/null | sort || true
+        ' | tee "$LOG_DIR/package-install.log" || {
+            HEADER_MISMATCH_PATTERN='(Unable to install exact kernel headers|Unable to locate package|Couldn.t find any package by regex|Couldn.t find any package by glob|has no installation candidate)'
+            if grep -Eqi "$HEADER_MISMATCH_PATTERN" "$LOG_DIR/package-install.log" 2>/dev/null; then
+                SKIPPED="true"
+                SKIP_REASON="debian-exact-headers-unavailable"
+                printf '%s\n' "$SKIP_REASON" > "$LOG_DIR/skip-reason.txt"
+                echo "::warning::Skipping $SAFE_LABEL because exact Debian-family headers for ${KREL} are not available in this CI environment."
+            else
+                exit 1
+            fi
+        }
+
+        if [ "$SKIPPED" != "true" ]; then
+            run_in_env '
+                set -euo pipefail
+                dpkg-query -W -f="\${binary:Package}\t\${Version}\n" "linux-headers*" "pve-headers*" 2>/dev/null | sort || true
+            ' | tee "$LOG_DIR/header-packages.log"
+
+            KDIR="$(run_in_env '
+            set -euo pipefail
+            BUILD_LINK="/lib/modules/${KREL}/build"
+            [ -e "$BUILD_LINK" ] || {
+                echo "::error::Missing ${BUILD_LINK} after header installation" >&2
+                exit 1
+            }
+
+            BUILD_TARGET="$(readlink -f "$BUILD_LINK" || printf "%s" "$BUILD_LINK")"
+            [ -f "$BUILD_TARGET/Makefile" ] || {
+                echo "::error::Header tree at ${BUILD_TARGET} does not contain a Makefile" >&2
+                exit 1
+            }
+
+            printf "%s" "$BUILD_TARGET"
+        ')"
+
+            [ -n "$KDIR" ] || fail "No usable exact kernel headers tree was found after package installation."
+            [ -f "$ROOT_DIR/VERSION" ] || fail "Missing VERSION file in $ROOT_DIR"
+            VERSION="$(tr -d ' \t\r\n' < "$ROOT_DIR/VERSION")"
+            [ -n "$VERSION" ] || fail "VERSION file is empty."
+
+            BINDER_PACKAGE="$(read_dkms_value "$ROOT_DIR/binder/dkms.conf" PACKAGE_NAME)"
+            ASHMEM_PACKAGE="$(read_dkms_value "$ROOT_DIR/ashmem/dkms.conf" PACKAGE_NAME)"
+            [ -n "$BINDER_PACKAGE" ] || fail "Unable to resolve PACKAGE_NAME from binder/dkms.conf"
+            [ -n "$ASHMEM_PACKAGE" ] || fail "Unable to resolve PACKAGE_NAME from ashmem/dkms.conf"
+
+            log "Using kernel headers from $KDIR"
+            log "Using repo VERSION $VERSION for DKMS package version"
+
+            rm -rf "$STAGING_DIR"
+            mkdir -p "$STAGING_DIR"
+            cp -a "$ROOT_DIR/binder" "$STAGING_DIR/binder"
+            cp -a "$ROOT_DIR/ashmem" "$STAGING_DIR/ashmem"
+            sed -i -E "s/^PACKAGE_VERSION=\"[^\"]*\"/PACKAGE_VERSION=\"$VERSION\"/" "$STAGING_DIR/binder/dkms.conf"
+            sed -i -E "s/^PACKAGE_VERSION=\"[^\"]*\"/PACKAGE_VERSION=\"$VERSION\"/" "$STAGING_DIR/ashmem/dkms.conf"
+
+            run_in_env '
+            set -euo pipefail
+
+            as_root() {
+                if [ "$(id -u)" -eq 0 ]; then
+                    "$@"
+                else
+                    sudo "$@"
+                fi
+            }
+
+            as_root rm -rf "/usr/src/${BINDER_PACKAGE}-${VERSION}" "/usr/src/${ASHMEM_PACKAGE}-${VERSION}"
+            as_root cp -a "$ARTIFACTS_REL/dkms-src/binder" "/usr/src/${BINDER_PACKAGE}-${VERSION}"
+            as_root cp -a "$ARTIFACTS_REL/dkms-src/ashmem" "/usr/src/${ASHMEM_PACKAGE}-${VERSION}"
+
+            as_root dkms remove -m "$BINDER_PACKAGE" -v "$VERSION" --all || true
+            as_root dkms remove -m "$ASHMEM_PACKAGE" -v "$VERSION" --all || true
+
+            echo "=== dkms add ==="
+            as_root dkms add -m "$BINDER_PACKAGE" -v "$VERSION"
+            as_root dkms add -m "$ASHMEM_PACKAGE" -v "$VERSION"
+
+            echo "=== dkms build ==="
+            as_root dkms build -m "$BINDER_PACKAGE" -v "$VERSION" -k "$KREL"
+            as_root dkms build -m "$ASHMEM_PACKAGE" -v "$VERSION" -k "$KREL"
+
+            echo "=== dkms install ==="
+            as_root dkms install -m "$BINDER_PACKAGE" -v "$VERSION" -k "$KREL"
+            as_root dkms install -m "$ASHMEM_PACKAGE" -v "$VERSION" -k "$KREL"
+        ' | tee "$LOG_DIR/dkms-build.log"
+
+        run_in_env '
+            set -euo pipefail
+            echo "=== dkms status ==="
+            dkms status || true
+        ' | tee "$LOG_DIR/dkms-status.log"
+
+        run_in_env '
+            set -euo pipefail
+            modinfo -k "$KREL" binder_linux
+        ' | tee "$LOG_DIR/modinfo-binder_linux.log"
+
+        run_in_env '
+            set -euo pipefail
+            modinfo -k "$KREL" ashmem_linux
+        ' | tee "$LOG_DIR/modinfo-ashmem_linux.log"
+
+        run_in_env '
+            set -euo pipefail
+
+            as_root() {
+                if [ "$(id -u)" -eq 0 ]; then
+                    "$@"
+                else
+                    sudo "$@"
+                fi
+            }
+
+            INSTALL_DIR="/lib/modules/${KREL}/updates/dkms"
+            [ -d "$INSTALL_DIR" ] || {
+                echo "::error::Expected DKMS install directory not found: ${INSTALL_DIR}" >&2
+                exit 1
+            }
+
+            mkdir -p "$ARTIFACTS_REL/modules" "$ARTIFACTS_REL/packages"
+
+            found=0
+            shopt -s nullglob
+            for file in "$INSTALL_DIR"/binder_linux*.ko* "$INSTALL_DIR"/ashmem_linux*.ko*; do
+                found=1
+                as_root cp -a "$file" "$ARTIFACTS_REL/modules/"
+            done
+            shopt -u nullglob
+
+            [ "$found" -eq 1 ] || {
+                echo "::error::No installed binder_linux/ashmem_linux modules were found under ${INSTALL_DIR}" >&2
+                exit 1
+            }
+
+            as_root chmod -R a+rX "$ARTIFACTS_REL"
+        ' | tee "$LOG_DIR/module-export.log"
+
+            if [ "${INPUT_PACKAGE_ARTIFACTS:-true}" = "true" ]; then
+                run_in_env '
+                    set -euo pipefail
+
+                    as_root() {
+                        if [ "$(id -u)" -eq 0 ]; then
+                            "$@"
+                        else
+                            sudo "$@"
+                        fi
+                    }
+
+                    echo "=== package artifact export ==="
+                    if dkms help 2>&1 | grep -q "mkdeb"; then
+                        as_root dkms mkdeb -m "$BINDER_PACKAGE" -v "$VERSION" -k "$KREL" || true
+                        as_root dkms mkdeb -m "$ASHMEM_PACKAGE" -v "$VERSION" -k "$KREL" || true
+                        find /var/lib/dkms -type f -name "*.deb" -print -exec cp -a {} "$ARTIFACTS_REL/packages/" \; || true
+                    else
+                        echo "dkms mkdeb is not available in this environment; skipping .deb export"
+                    fi
+                ' | tee "$LOG_DIR/package-artifacts.log" || true
+            else
+                printf '%s\n' 'package artifact export disabled by input' | tee "$LOG_DIR/package-artifacts.log"
+            fi
+        fi
+
+        {
+            echo "artifacts_path=$ARTIFACTS_PATH"
+            echo "kernel_version=$KREL"
+            echo "distro_id=$DISTRO_ID"
+            echo "skipped=$SKIPPED"
+            echo "skip_reason=$SKIP_REASON"
+        } >> "$GITHUB_OUTPUT"
+
+        log "Artifacts staged at $ARTIFACTS_PATH"
+        SCRIPT
+
+        chmod +x "$RUNNER_TEMP/deb-dkms-build.sh"
+        "$RUNNER_TEMP/deb-dkms-build.sh"

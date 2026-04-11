@@ -1,58 +1,31 @@
 # Android IPC Kernel Modules
 
-Linux kernel module project for Android IPC on host kernels that do not ship usable Binder/Ashmem modules for containerized Android workloads.
+Out-of-tree `binder_linux` and `ashmem_linux` modules for ReDroid / Waydroid style Android container hosts, with release packaging, DKMS fallback, and `ipcverify` validation.
 
-This repository builds and packages:
+## Supported Prebuilt Kernel Modules
 
-- `binder_linux` (Binder IPC + binderfs support)
-- `ashmem_linux` (legacy Android shared memory compatibility)
+| Distro | Kernel track used for prebuilt assets | Module availability |
+| --- | --- | --- |
+| Ubuntu 24.04 | `linux-headers-generic` | ✅ bundled in the release `.run` and GitHub release assets |
+| Debian 12 amd64 | `linux-headers-amd64` | ✅ bundled in the release `.run` and GitHub release assets |
+| Debian 13 (trixie) amd64 | `linux-headers-amd64` | ✅ bundled in the release `.run` and GitHub release assets |
+| Proxmox VE 8 | `pve-headers` | ✅ bundled in the release `.run` and GitHub release assets |
+| Proxmox VE 9 | `pve-headers` | ✅ bundled in the release `.run` and GitHub release assets |
 
-Target use cases include ReDroid and Waydroid host containers (LXC or Docker), especially on modern distro and Proxmox kernels. VMs are unnecessary, not required.
+RPM-family CI (Fedora, Silverblue, RHEL/CentOS Stream, and Amazon Linux 2/2023) currently validates DKMS builds on GitHub even when those families are not all emitted as prebuilt release assets.
 
-## Release Installer (`.run`)
+## `.run` Installer
 
-Releases now publish a self-extracting installer that behaves like a lightweight `.run` package.
-
-It embeds:
-
-- `prebuilt/<kernel>/binder_linux.ko`
-- `prebuilt/<kernel>/ashmem_linux.ko`
-- the bundled DKMS source trees from `binder/` and `ashmem/`
-- `load_modules.sh`
-- `scripts/verify-environment.sh`
-- `test/test_ipc`
-
-Installer flow:
-
-1. Detect the running kernel with `uname -r`
-2. Install matching prebuilt `.ko` files when available
-3. Fall back to DKMS rebuild when no exact prebuilt match exists
-4. Load `ashmem_linux` and `binder_linux`
-5. Mount `binderfs` at `/dev/binderfs`
-6. Run `test/test_ipc`
-7. Write a full log to `/var/log/redroid-modules-install.log`
-
-Usage:
+The self-extracting installer ships workflow-built prebuilt modules under `prebuilt/<kernel-release>/`, the bundled `binder/` and `ashmem/` DKMS trees, `load_modules.sh`, and verification helpers. It detects `uname -r`, installs matching prebuilt modules first, and falls back to DKMS only when no exact prebuilt module exists; use `--no-dkms` to disable that fallback.
 
 ```bash
-chmod +x redroid-modules-standalone-<version>.run
 sudo ./redroid-modules-standalone-<version>.run
 ```
 
-Non-interactive install
+Use `--extract-only --target <dir>` when you want to inspect the bundle without installing it.
 
-```bash
-sudo ./redroid-modules-standalone-<version>.run --silent --yes
-```
+## `ipcverify`
 
-The GitHub Actions release workflow builds per-kernel prebuilt modules for Debian and Proxmox targets on `ubuntu-latest`, uploads the `.run` installer as a release asset, and also publishes the raw per-kernel `.ko` files.
+> `ipcverify` (Linux + Android) is an idempotent verification tool used by the installer to validate binder/ashmem functionality. It can also run independently of the kernel modules.
 
-See [docs/RELEASE_BUNDLE_LAYOUT.md](docs/RELEASE_BUNDLE_LAYOUT.md) for the exact bundle layout.
-
-## Project Status
-
-- kernel API compatibility hardening for newer kernels
-- stronger DKMS pre/post-build checks
-- CI/CD workflows for build, analysis, and packaging
-- runtime instrumentation for ashmem and binder allocator debugging
-- userspace validation tests for binderfs, binder, and ashmem
+See `docs/BUILD.md`, `docs/KERNEL_COMPAT.md`, `docs/release_bundle.md`, `docs/ipcverify.md`, `docs/versioning.md`, and `docs/design.md` for the detailed behavior.

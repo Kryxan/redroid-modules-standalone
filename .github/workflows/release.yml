@@ -179,15 +179,15 @@ jobs:
               shell: bash
               run: |
                   set -euo pipefail
-                  make KERNEL_SRC="${{ steps.kernel.outputs.kdir }}"
+                  make modules KERNEL_SRC="${{ steps.kernel.outputs.kdir }}"
                   modinfo binder/binder_linux.ko | grep -E '^(version|vermagic):'
                   modinfo ashmem/ashmem_linux.ko | grep -E '^(version|vermagic):'
 
-            - name: Build and validate userspace tests
+            - name: Build and validate ipcverify host
               shell: bash
               run: |
                   set -euo pipefail
-                  make -C test all
+                  make -C ipcverify host OUTPUT_DIR="$(pwd)/bin"
                   make ci-check
                   make ci-test || true
 
@@ -197,10 +197,10 @@ jobs:
                   set -euo pipefail
                   VERSION="${{ needs.validate-version.outputs.version }}"
                   KVER="${{ steps.kernel.outputs.kver }}"
-                  mkdir -p "dist/prebuilt/$KVER" dist/kernel-bundles
+                  mkdir -p "dist/prebuilt/$KVER" dist/kernel-bundles bin
                   cp binder/binder_linux.ko "dist/prebuilt/$KVER/binder_linux.ko"
                   cp ashmem/ashmem_linux.ko "dist/prebuilt/$KVER/ashmem_linux.ko"
-                  cp test/test_ipc "dist/prebuilt/$KVER/test_ipc"
+                  cp bin/ipcverify-host "dist/prebuilt/$KVER/ipcverify-host"
                   cp VERSION "dist/prebuilt/$KVER/VERSION"
                   printf '%s\n' "$KVER" > "dist/prebuilt/$KVER/KERNEL"
                   sha256sum "dist/prebuilt/$KVER/"* > "dist/prebuilt/$KVER/SHA256SUMS"
@@ -256,7 +256,7 @@ jobs:
                     mkdir -p "dist/prebuilt/$kver"
                     cp "$src_dir/binder_linux.ko" "dist/prebuilt/$kver/binder_linux.ko"
                     cp "$src_dir/ashmem_linux.ko" "dist/prebuilt/$kver/ashmem_linux.ko"
-                    for extra in test_ipc VERSION KERNEL SHA256SUMS; do
+                    for extra in ipcverify-host ipcverify.apk VERSION KERNEL SHA256SUMS; do
                       if [ -f "$src_dir/$extra" ]; then
                         cp "$src_dir/$extra" "dist/prebuilt/$kver/$extra"
                       fi
@@ -270,18 +270,53 @@ jobs:
                     exit 1
                   fi
 
+            - name: Set up Java 17 for Android build
+              uses: actions/setup-java@v4
+              with:
+                  distribution: temurin
+                  java-version: "17"
+
+            - name: Set up Gradle
+              uses: gradle/actions/setup-gradle@v4
+              with:
+                  gradle-version: "8.7"
+
+            - name: Set up Android SDK
+              uses: android-actions/setup-android@v3
+
+            - name: Install Android SDK packages
+              shell: bash
+              run: |
+                  set -euo pipefail
+                  yes | sdkmanager --licenses >/dev/null || true
+                  sdkmanager \
+                    "platforms;android-34" \
+                    "build-tools;34.0.0" \
+                    "platform-tools" \
+                    "cmake;3.22.1" \
+                    "ndk;26.1.10909125"
+
+            - name: Build ipcverify release artifacts
+              shell: bash
+              run: |
+                  set -euo pipefail
+                  make -C ipcverify host OUTPUT_DIR="$(pwd)/bin"
+                  make -C ipcverify android OUTPUT_DIR="$(pwd)/bin"
+
             - name: Build self-extracting .run installer
               shell: bash
               run: |
                   set -euo pipefail
                   chmod +x scripts/build-release-bundle.sh
-                  scripts/build-release-bundle.sh --version "${{ needs.validate-version.outputs.version }}" --prebuilt-root "$(pwd)/dist/prebuilt" --output-dir "$(pwd)/dist"
+                  scripts/build-release-bundle.sh --version "${{ needs.validate-version.outputs.version }}" --prebuilt-root "$(pwd)/dist/prebuilt" --output-dir "$(pwd)/bin"
 
             - name: Prepare GitHub Release assets
               shell: bash
               run: |
                   set -euo pipefail
                   cp dist/kernel-bundles/*.tar.gz dist/github-release/ 2>/dev/null || true
+                  cp bin/ipcverify-host dist/github-release/ipcverify-host
+                  cp bin/ipcverify.apk dist/github-release/ipcverify.apk
                   for kdir in dist/prebuilt/*; do
                     [ -d "$kdir" ] || continue
                     kver="$(basename "$kdir")"
@@ -295,9 +330,11 @@ jobs:
               with:
                   name: release-${{ needs.validate-version.outputs.version }}
                   path: |
-                      dist/*.run
+                      bin/*.run
+                      bin/ipcverify-host
+                      bin/ipcverify.apk
                       dist/github-release/*
-                      dist/release-layout.txt
+                      bin/release-layout.txt
                   if-no-files-found: error
 
             - name: Publish GitHub Release
@@ -308,5 +345,7 @@ jobs:
                   name: redroid-modules ${{ needs.validate-version.outputs.version }}
                   generate_release_notes: true
                   files: |
-                      dist/*.run
+                      bin/*.run
+                      bin/ipcverify-host
+                      bin/ipcverify.apk
                       dist/github-release/*

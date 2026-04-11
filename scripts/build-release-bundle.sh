@@ -3,8 +3,8 @@ set -eu
 
 ROOT_DIR=$(CDPATH='' && cd -- "$(dirname -- "$0")/.." && pwd)
 VERSION=""
-PREBUILT_ROOT="$ROOT_DIR/dist/prebuilt"
-OUTPUT_DIR="$ROOT_DIR/dist"
+PREBUILT_ROOT="$ROOT_DIR/bin/prebuilt"
+OUTPUT_DIR="$ROOT_DIR/bin"
 BUNDLE_NAME="redroid-modules-standalone"
 KEEP_STAGE=0
 
@@ -40,6 +40,11 @@ copy_clean_tree() {
             --exclude='Module.symvers' \
             --exclude='modules.order' \
             --exclude='.tmp_versions' \
+            --exclude='.gradle' \
+            --exclude='build' \
+            --exclude='app/build' \
+            --exclude='local.properties' \
+            --exclude='*.apk' \
             -cf - .
     ) | (
         cd "$dst_dir"
@@ -78,7 +83,7 @@ Options:
   --silent, --non-interactive
                           Run without interactive prompts
   --no-dkms               Disable DKMS fallback when no prebuilt module exists
-  --skip-test             Skip the runtime test_ipc validation
+  --skip-test             Skip the post-install ipcverify-host validation
   --prefix DIR            Alternate installation prefix (advanced)
   --help, -h              Show this help text
 USAGE
@@ -260,8 +265,8 @@ if [ ! -d "$PREBUILT_ROOT" ]; then
     exit 1
 fi
 
-if [ ! -x "$ROOT_DIR/test/test_ipc" ]; then
-    make -C "$ROOT_DIR/test" test_ipc
+if [ ! -x "$ROOT_DIR/ipcverify/build/ipcverify-host" ]; then
+    make -C "$ROOT_DIR/ipcverify" host OUTPUT_DIR="$ROOT_DIR/bin"
 fi
 
 mkdir -p "$OUTPUT_DIR"
@@ -270,12 +275,12 @@ BUNDLE_DIR="$STAGE_ROOT/${BUNDLE_NAME}-${VERSION}"
 RUN_OUTPUT="$OUTPUT_DIR/${BUNDLE_NAME}-${VERSION}.run"
 LAYOUT_OUTPUT="$OUTPUT_DIR/release-layout.txt"
 
-mkdir -p "$BUNDLE_DIR/prebuilt" "$BUNDLE_DIR/scripts" "$BUNDLE_DIR/test"
+mkdir -p "$BUNDLE_DIR/prebuilt" "$BUNDLE_DIR/scripts" "$BUNDLE_DIR/bin"
 
 copy_clean_tree "$ROOT_DIR/binder" "$BUNDLE_DIR/binder"
 copy_clean_tree "$ROOT_DIR/ashmem" "$BUNDLE_DIR/ashmem"
-copy_clean_tree "$ROOT_DIR/test" "$BUNDLE_DIR/test"
 copy_clean_tree "$ROOT_DIR/scripts" "$BUNDLE_DIR/scripts"
+copy_clean_tree "$ROOT_DIR/ipcverify" "$BUNDLE_DIR/ipcverify"
 
 cp "$ROOT_DIR/Makefile" "$BUNDLE_DIR/Makefile"
 cp "$ROOT_DIR/VERSION" "$BUNDLE_DIR/VERSION"
@@ -290,8 +295,11 @@ find "$PREBUILT_ROOT" -mindepth 1 -maxdepth 1 -type d | while read -r kernel_dir
     mkdir -p "$BUNDLE_DIR/prebuilt/$kernel_name"
     cp "$kernel_dir/binder_linux.ko" "$BUNDLE_DIR/prebuilt/$kernel_name/binder_linux.ko"
     cp "$kernel_dir/ashmem_linux.ko" "$BUNDLE_DIR/prebuilt/$kernel_name/ashmem_linux.ko"
-    if [ -f "$kernel_dir/test_ipc" ]; then
-        cp "$kernel_dir/test_ipc" "$BUNDLE_DIR/prebuilt/$kernel_name/test_ipc"
+    if [ -f "$kernel_dir/ipcverify-host" ]; then
+        cp "$kernel_dir/ipcverify-host" "$BUNDLE_DIR/prebuilt/$kernel_name/ipcverify-host"
+    fi
+    if [ -f "$kernel_dir/ipcverify.apk" ]; then
+        cp "$kernel_dir/ipcverify.apk" "$BUNDLE_DIR/prebuilt/$kernel_name/ipcverify.apk"
     fi
     if [ -f "$kernel_dir/KERNEL" ]; then
         cp "$kernel_dir/KERNEL" "$BUNDLE_DIR/prebuilt/$kernel_name/KERNEL"
@@ -304,8 +312,13 @@ find "$PREBUILT_ROOT" -mindepth 1 -maxdepth 1 -type d | while read -r kernel_dir
     fi
 done
 
-cp "$ROOT_DIR/test/test_ipc" "$BUNDLE_DIR/test/test_ipc"
-chmod +x "$BUNDLE_DIR/test/test_ipc"
+cp "$ROOT_DIR/ipcverify/build/ipcverify-host" "$BUNDLE_DIR/bin/ipcverify-host"
+chmod +x "$BUNDLE_DIR/bin/ipcverify-host"
+if [ -f "$ROOT_DIR/bin/ipcverify.apk" ]; then
+    cp "$ROOT_DIR/bin/ipcverify.apk" "$BUNDLE_DIR/bin/ipcverify.apk"
+elif [ -f "$ROOT_DIR/ipcverify/app/build/outputs/apk/debug/ipcverify.apk" ]; then
+    cp "$ROOT_DIR/ipcverify/app/build/outputs/apk/debug/ipcverify.apk" "$BUNDLE_DIR/bin/ipcverify.apk"
+fi
 
 sed -i -E "s/^(PACKAGE_VERSION=\").*(\")/\1${VERSION}\2/" "$BUNDLE_DIR/binder/dkms.conf" "$BUNDLE_DIR/ashmem/dkms.conf"
 

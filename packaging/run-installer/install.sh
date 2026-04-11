@@ -14,7 +14,7 @@ BUNDLE_VERSION=unknown
 INSTALL_MODE=not-started
 MODULE_STATUS=not-started
 BINDERFS_STATUS=not-started
-TEST_STATUS=not-run
+IPCVERIFY_STATUS=not-run
 VERIFY_STATUS=not-run
 SUMMARY_RESULT=SUCCESS
 LOG_FILE=${REDROID_INSTALL_LOG:-/var/log/redroid-modules-install.log}
@@ -28,7 +28,7 @@ Options:
   --yes, -y             Accept prompts automatically
   --non-interactive     Do not prompt for confirmation
   --no-dkms             Do not fall back to DKMS when no prebuilt module exists
-  --skip-test           Skip running test/test_ipc after installation
+  --skip-test           Skip running installed ipcverify-host after installation
   --prefix DIR          Alternate install prefix (advanced; default: /)
   --help, -h            Show this help text
 EOF
@@ -75,7 +75,7 @@ print_summary() {
     printf 'Install mode   : %s\n' "$INSTALL_MODE"
     printf 'Module load    : %s\n' "$MODULE_STATUS"
     printf 'binderfs       : %s\n' "$BINDERFS_STATUS"
-    printf 'test_ipc       : %s\n' "$TEST_STATUS"
+    printf 'ipcverify      : %s\n' "$IPCVERIFY_STATUS"
     printf 'verify script  : %s\n' "$VERIFY_STATUS"
     printf 'Log file       : %s\n' "$LOG_FILE"
     echo "--------------------------------------------------"
@@ -284,32 +284,81 @@ load_modules_and_mount() {
     fi
 }
 
-run_test_suite() {
-    if [ "$SKIP_TEST" -eq 1 ]; then
-        TEST_STATUS=skipped
-        return 0
-    fi
+install_ipcverify_tools() {
+    target_root=${PREFIX%/}
+    [ -n "$target_root" ] || target_root=/
+    tool_dir="$target_root/usr/local/lib/redroid-modules/bin"
+    command_dir="$target_root/usr/local/bin"
+    host_candidate=
+    apk_candidate=
 
-    echo "Running test_ipc validation suite"
-    test_bin="$BUNDLE_DIR/test/test_ipc"
+    mkdir -p "$tool_dir" "$command_dir"
 
-    if [ ! -x "$test_bin" ]; then
-        if command_exists cc; then
-            echo "Embedded test_ipc binary not present; compiling from source"
-            (cd "$BUNDLE_DIR/test" && cc -Wall -Wextra -O2 -I../binder -I../ashmem -o test_ipc test_ipc.c)
-        else
-            TEST_STATUS=failed
-            echo "ERROR: test_ipc binary is missing and no compiler is available." >&2
-            return 1
+    for candidate in \
+        "$BUNDLE_DIR/bin/ipcverify-host" \
+        "$BUNDLE_DIR/prebuilt/$KERNEL_RELEASE/ipcverify-host" \
+        "$BUNDLE_DIR/ipcverify/build/ipcverify-host"; do
+        if [ -x "$candidate" ]; then
+            host_candidate=$candidate
+            break
         fi
+    done
+
+    for candidate in \
+        "$BUNDLE_DIR/bin/ipcverify.apk" \
+        "$BUNDLE_DIR/prebuilt/$KERNEL_RELEASE/ipcverify.apk" \
+        "$BUNDLE_DIR/ipcverify/apk/ipcverify.apk"; do
+        if [ -f "$candidate" ]; then
+            apk_candidate=$candidate
+            break
+        fi
+    done
+
+    if [ -n "$host_candidate" ]; then
+        cp "$host_candidate" "$tool_dir/ipcverify-host"
+        chmod 0755 "$tool_dir/ipcverify-host"
+        ln -sf ../lib/redroid-modules/bin/ipcverify-host "$command_dir/ipcverify-host"
     fi
 
-    if (cd "$BUNDLE_DIR/test" && ./test_ipc); then
-        TEST_STATUS=passed
+    if [ -n "$apk_candidate" ]; then
+        cp "$apk_candidate" "$tool_dir/ipcverify.apk"
+        chmod 0644 "$tool_dir/ipcverify.apk"
+    fi
+}
+
+run_ipcverify_suite() {
+    if [ "$SKIP_TEST" -eq 1 ]; then
+        IPCVERIFY_STATUS=skipped
         return 0
     fi
 
-    TEST_STATUS=failed
+    echo "Running installed ipcverify-host validation"
+    target_root=${PREFIX%/}
+    [ -n "$target_root" ] || target_root=/
+    host_bin=
+
+    for candidate in \
+        "$target_root/usr/local/bin/ipcverify-host" \
+        "$target_root/usr/local/lib/redroid-modules/bin/ipcverify-host" \
+        "$BUNDLE_DIR/bin/ipcverify-host"; do
+        if [ -x "$candidate" ]; then
+            host_bin=$candidate
+            break
+        fi
+    done
+
+    if [ -z "$host_bin" ]; then
+        IPCVERIFY_STATUS=failed
+        echo "ERROR: ipcverify-host is missing from the installed bundle." >&2
+        return 1
+    fi
+
+    if "$host_bin" --local-only --yes; then
+        IPCVERIFY_STATUS=passed
+        return 0
+    fi
+
+    IPCVERIFY_STATUS=failed
     return 1
 }
 
@@ -389,17 +438,19 @@ if ! install_prebuilt_modules; then
     install_via_dkms
 fi
 
+install_ipcverify_tools
+
 if [ "$PREFIX" != "/" ]; then
     MODULE_STATUS=staged-only
     BINDERFS_STATUS=staged-only
-    TEST_STATUS=skipped
+    IPCVERIFY_STATUS=skipped
     VERIFY_STATUS=skipped
     echo "Alternate prefix mode requested; files were staged under $PREFIX without loading live modules."
     exit 0
 fi
 
 load_modules_and_mount
-run_test_suite
+run_ipcverify_suite
 run_verify_script
 
 echo "redroid-modules installation completed successfully."
