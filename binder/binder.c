@@ -139,7 +139,7 @@ static DECLARE_WAIT_QUEUE_HEAD(binder_user_error_wait);
 static int binder_stop_on_user_error;
 
 static int binder_set_stop_on_user_error(const char *val,
-									 compat_kernel_param_t *kp)
+										 compat_kernel_param_t *kp)
 {
 	int ret;
 

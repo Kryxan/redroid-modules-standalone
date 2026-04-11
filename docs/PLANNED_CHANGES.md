@@ -4,9 +4,10 @@ This file is **future-only**. Items that are already implemented belong in `docs
 
 ## Installer Behavior and Policy
 
-1. Keep the `.run` installer strictly **prebuilt-first** and continue auditing for any path that could bypass workflow-built modules.
-2. Decide whether a maintainer-facing “force DKMS rebuild” mode is needed, or whether the current `prebuilt first / fallback only when needed` rule should stay absolute.
-3. Make the installer’s decision path even more explicit in logs and release notes so users can tell when prebuilt assets were used versus DKMS fallback.
+1. Keep the `.run` installer as the **canonical cross-distro installation path** and publish standalone `ipcverify` assets alongside it, not loose kernel modules outside it.
+2. Keep the installer strictly **prebuilt-first** with best-effort DKMS fallback only when matching bundled modules are absent and the host can supply usable headers/build tools.
+3. Preserve and harden `--extract-only`, bundled source/module inspection, payload integrity verification, and explicit logs showing whether the install path used prebuilt modules or DKMS.
+4. Continue documenting rpm-ostree / immutable-host caveats: current-boot module installation is supported, but persistent build-tool availability may still require package layering on systems such as Fedora Silverblue.
 
 ## `ipcverify` Integration Follow-Up
 
@@ -16,8 +17,8 @@ This file is **future-only**. Items that are already implemented belong in `docs
 
 ## Kernel Header Resolution and Compatibility
 
-1. Keep reducing distro-specific header resolution differences between Debian-family and RPM-family workflows.
-2. Continue documenting and testing edge cases for Proxmox kernels, rpm-ostree hosts, and Amazon Linux 2 vs 2023.
+1. Keep reducing distro-specific header resolution differences across Debian-family, RHEL-family, Fedora/Silverblue, Amazon Linux, openEuler, and Alibaba/Anolis-compatible workflows.
+2. Continue documenting and testing edge cases for Proxmox kernels, rpm-ostree hosts, Amazon Linux 2 vs 2023, and EL-derived distributions such as AlmaLinux, Rocky, and CloudLinux.
 
 ## Ashmem Memory Modernization Backlog
 
@@ -28,6 +29,13 @@ Already implemented and documented in `docs/design.md`:
 - debugfs observability for backing mode and region/stats output
 - VM-flag wrapper usage
 - shrinker registration wrappers
+
+Additional upstream `ashmem` TODO items that still align with the current direction:
+
+- finish the remaining sparse/static-analysis cleanups in the legacy ashmem tree
+- keep auditing arch/Kconfig dependency assumptions as distro and kernel coverage expands
+- continue auditing userspace-facing ashmem behavior so the memfd-compatible path stays sane and backward-compatible
+- treat the older file-renaming / legacy-driver cleanup items as low-priority repo hygiene unless they unblock compatibility work
 
 ### Phase M1 — Memfd semantics and safety
 
@@ -69,9 +77,10 @@ Already implemented and documented in `docs/design.md`:
 
 ## Longer-Term Feature Ideas
 
-1. Extend `ipcverify` stress coverage for reclaim, memfd-backed ashmem behavior, and Android runtime edge cases.
+1. Extend `ipcverify` stress coverage for reclaim, memfd-backed ashmem behavior, Android runtime edge cases, and legacy `ion` / `vsoc` regressions where those code paths remain supported.
 2. Improve Secure Boot guidance and optional signing helpers for external modules.
 3. Revisit GPU normalization / shim work only after the kernel-module and validation baseline stays stable.
+4. Keep the old `ion` / `vsoc` upstream TODOs as low-priority carry-forward work: better per-heap test coverage, improved futex wait-queue granularity, extra debugfs visibility, and eventual retirement of legacy-only ioctls where practical.
 
 ## Branch and Process Note
 

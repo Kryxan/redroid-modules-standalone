@@ -314,16 +314,18 @@ jobs:
               shell: bash
               run: |
                   set -euo pipefail
-                  cp dist/kernel-bundles/*.tar.gz dist/github-release/ 2>/dev/null || true
+                  mkdir -p dist/github-release
                   cp bin/ipcverify-host dist/github-release/ipcverify-host
                   cp bin/ipcverify.apk dist/github-release/ipcverify.apk
-                  for kdir in dist/prebuilt/*; do
-                    [ -d "$kdir" ] || continue
-                    kver="$(basename "$kdir")"
-                    cp "$kdir/binder_linux.ko" "dist/github-release/binder_linux-${kver}.ko"
-                    cp "$kdir/ashmem_linux.ko" "dist/github-release/ashmem_linux-${kver}.ko"
-                    cp "$kdir/SHA256SUMS" "dist/github-release/SHA256SUMS-${kver}.txt"
-                  done
+                  cp bin/release-layout.txt dist/github-release/release-layout.txt
+                  (
+                    cd dist/github-release
+                    sha256sum ipcverify-host ipcverify.apk > SHA256SUMS.txt
+                  )
+                  (
+                    cd bin
+                    sha256sum *.run >> ../dist/github-release/SHA256SUMS.txt
+                  )
 
             - name: Upload packaged release artifacts
               uses: actions/upload-artifact@v4
@@ -348,4 +350,4 @@ jobs:
                       bin/*.run
                       bin/ipcverify-host
                       bin/ipcverify.apk
-                      dist/github-release/*
+                      dist/github-release/SHA256SUMS.txt

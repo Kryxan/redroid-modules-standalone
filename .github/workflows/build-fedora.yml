@@ -1,4 +1,4 @@
-name: Build and Validate (Fedora)
+name: Build and Validate (Fedora and Extended RPM)
 
 on:
   push:
@@ -13,9 +13,26 @@ permissions:
   contents: read
 
 jobs:
-  fedora:
-    name: fedora-latest
+  rpm-family:
+    name: ${{ matrix.name }}
     runs-on: ubuntu-latest
+    continue-on-error: ${{ matrix.allow_failure }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: fedora-latest
+            image: fedora:latest
+            artifact_label: fedora
+            allow_failure: false
+          - name: openeuler-24.03-lts
+            image: openeuler/openeuler:24.03-lts
+            artifact_label: openeuler-24.03
+            allow_failure: true
+          - name: alibaba-cloud-linux-compatible-anolis-23
+            image: openanolis/anolisos:23
+            artifact_label: anolis-23
+            allow_failure: true
 
     steps:
       - uses: actions/checkout@v4
@@ -24,34 +41,34 @@ jobs:
         id: dkms
         uses: ./.github/actions/rpm-dkms-build
         with:
-          container-image: fedora:latest
-          distro-label: fedora
+          container-image: ${{ matrix.image }}
+          distro-label: ${{ matrix.artifact_label }}
 
       - name: Upload build logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: fedora-dkms-logs-${{ steps.dkms.outputs.kernel_version || 'unknown' }}
-          path: artifacts/fedora/logs/
+          name: ${{ matrix.artifact_label }}-dkms-logs-${{ steps.dkms.outputs.kernel_version || 'unknown' }}
+          path: artifacts/${{ matrix.artifact_label }}/logs/
           if-no-files-found: error
 
       - name: Upload module artifacts
         if: steps.dkms.outputs.skipped != 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: fedora-modules-${{ steps.dkms.outputs.kernel_version }}
-          path: artifacts/fedora/modules/*.ko
+          name: ${{ matrix.artifact_label }}-modules-${{ steps.dkms.outputs.kernel_version }}
+          path: artifacts/${{ matrix.artifact_label }}/modules/*.ko
           if-no-files-found: error
 
       - name: Upload DKMS packages
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: fedora-dkms-packages-${{ steps.dkms.outputs.kernel_version || 'unknown' }}
-          path: artifacts/fedora/packages/
+          name: ${{ matrix.artifact_label }}-dkms-packages-${{ steps.dkms.outputs.kernel_version || 'unknown' }}
+          path: artifacts/${{ matrix.artifact_label }}/packages/
           if-no-files-found: ignore
 
       - name: Report skipped environment
         if: steps.dkms.outputs.skipped == 'true'
         shell: bash
-        run: echo "Skipped fedora-latest due to ${{ steps.dkms.outputs.skip_reason || 'a non-actionable CI environment mismatch' }}."
+        run: echo "Skipped ${{ matrix.name }} due to ${{ steps.dkms.outputs.skip_reason || 'a non-actionable CI environment mismatch' }}."

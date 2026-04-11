@@ -16,6 +16,7 @@ MODULE_STATUS=not-started
 BINDERFS_STATUS=not-started
 IPCVERIFY_STATUS=not-run
 VERIFY_STATUS=not-run
+INTEGRITY_STATUS=not-run
 SUMMARY_RESULT=SUCCESS
 LOG_FILE=${REDROID_INSTALL_LOG:-/var/log/redroid-modules-install.log}
 
@@ -77,6 +78,7 @@ print_summary() {
     printf 'binderfs       : %s\n' "$BINDERFS_STATUS"
     printf 'ipcverify      : %s\n' "$IPCVERIFY_STATUS"
     printf 'verify script  : %s\n' "$VERIFY_STATUS"
+    printf 'Integrity      : %s\n' "$INTEGRITY_STATUS"
     printf 'Log file       : %s\n' "$LOG_FILE"
     echo "--------------------------------------------------"
     printf 'RESULT         : %s\n' "$SUMMARY_RESULT"
@@ -140,6 +142,30 @@ resolve_bundle_dir() {
     fi
 }
 
+verify_bundle_integrity() {
+    if [ ! -f "$BUNDLE_DIR/BUNDLE_SHA256SUMS" ]; then
+        INTEGRITY_STATUS=skipped
+        echo "WARNING: bundle integrity manifest is missing; continuing without checksum verification."
+        return 0
+    fi
+
+    if ! command_exists sha256sum; then
+        INTEGRITY_STATUS=skipped
+        echo "WARNING: sha256sum is unavailable; skipping bundle checksum verification."
+        return 0
+    fi
+
+    echo "Verifying extracted bundle integrity"
+    if (cd "$BUNDLE_DIR" && sha256sum -c BUNDLE_SHA256SUMS); then
+        INTEGRITY_STATUS=passed
+        return 0
+    fi
+
+    INTEGRITY_STATUS=failed
+    echo "ERROR: bundle integrity verification failed." >&2
+    return 1
+}
+
 headers_present() {
     [ -d "/lib/modules/$KERNEL_RELEASE/build" ] \
         || [ -d "/usr/src/linux-headers-$KERNEL_RELEASE" ] \
@@ -167,23 +193,28 @@ ensure_ca_certificates() {
 install_build_requirements() {
     ensure_ca_certificates
 
-    if command_exists apt-get; then
+    if command_exists rpm-ostree && [ -e /run/ostree-booted ]; then
+        echo "rpm-ostree / immutable host detected; current-boot module installation is supported, but persistent DKMS tool availability may require layered packages across reboots."
+        rpm-ostree install --apply-live --allow-inactive dkms make gcc git kmod findutils tar gzip sed \
+            "kernel-devel-$KERNEL_RELEASE" "kernel-headers-$KERNEL_RELEASE" \
+            || rpm-ostree install --apply-live --allow-inactive dkms make gcc git kmod findutils tar gzip sed kernel-devel kernel-headers
+    elif command_exists apt-get; then
         apt-get update
-        apt-get install -y dkms make gcc kmod \
+        apt-get install -y build-essential dkms git make gcc kmod findutils tar gzip sed \
             "linux-headers-$KERNEL_RELEASE" \
-            || apt-get install -y dkms make gcc kmod "pve-headers-$KERNEL_RELEASE" \
-            || apt-get install -y dkms make gcc kmod "proxmox-headers-$KERNEL_RELEASE" \
-            || apt-get install -y dkms make gcc kmod linux-headers-amd64 \
-            || apt-get install -y dkms make gcc kmod pve-headers
+            || apt-get install -y build-essential dkms git make gcc kmod findutils tar gzip sed "pve-headers-$KERNEL_RELEASE" \
+            || apt-get install -y build-essential dkms git make gcc kmod findutils tar gzip sed "proxmox-headers-$KERNEL_RELEASE" \
+            || apt-get install -y build-essential dkms git make gcc kmod findutils tar gzip sed linux-headers-amd64 \
+            || apt-get install -y build-essential dkms git make gcc kmod findutils tar gzip sed pve-headers
     elif command_exists dnf; then
-        dnf install -y dkms make gcc kmod "kernel-devel-$KERNEL_RELEASE" \
-            || dnf install -y dkms make gcc kmod kernel-devel
+        dnf install -y dkms git make gcc kmod findutils tar gzip sed "kernel-devel-$KERNEL_RELEASE" \
+            || dnf install -y dkms git make gcc kmod findutils tar gzip sed kernel-devel kernel-headers
     elif command_exists yum; then
-        yum install -y dkms make gcc kmod "kernel-devel-$KERNEL_RELEASE" \
-            || yum install -y dkms make gcc kmod kernel-devel
+        yum install -y dkms git make gcc kmod findutils tar gzip sed "kernel-devel-$KERNEL_RELEASE" \
+            || yum install -y dkms git make gcc kmod findutils tar gzip sed kernel-devel kernel-headers
     elif command_exists zypper; then
-        zypper --non-interactive install dkms make gcc kmod "kernel-default-devel=$KERNEL_RELEASE" \
-            || zypper --non-interactive install dkms make gcc kmod kernel-default-devel
+        zypper --non-interactive install dkms git make gcc kmod findutils tar gzip sed "kernel-default-devel=$KERNEL_RELEASE" \
+            || zypper --non-interactive install dkms git make gcc kmod findutils tar gzip sed kernel-default-devel
     else
         echo "ERROR: no supported package manager found for DKMS fallback." >&2
         exit 1
@@ -430,6 +461,7 @@ if [ ! -d "$BUNDLE_DIR/prebuilt" ] || [ ! -d "$BUNDLE_DIR/binder" ] || [ ! -d "$
     exit 1
 fi
 
+verify_bundle_integrity
 prompt_continue
 
 echo "Installing redroid-modules for kernel $KERNEL_RELEASE"

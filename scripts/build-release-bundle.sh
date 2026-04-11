@@ -322,12 +322,30 @@ fi
 
 sed -i -E "s/^(PACKAGE_VERSION=\").*(\")/\1${VERSION}\2/" "$BUNDLE_DIR/binder/dkms.conf" "$BUNDLE_DIR/ashmem/dkms.conf"
 
+SUPPORTED_KERNELS=$(
+    find "$PREBUILT_ROOT" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' 2>/dev/null \
+        | LC_ALL=C sort \
+        | paste -sd ',' -
+)
+
 cat > "$BUNDLE_DIR/RELEASE_MANIFEST.txt" <<EOF
 name=${BUNDLE_NAME}
 version=${VERSION}
 generated_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-prebuilt_root=${PREBUILT_ROOT}
+supported_kernels=${SUPPORTED_KERNELS}
+install_mode=prebuilt-first-with-dkms-fallback
+payload_integrity=BUNDLE_SHA256SUMS
 EOF
+
+(
+    cd "$BUNDLE_DIR"
+    find . -type f ! -name 'BUNDLE_SHA256SUMS' -print \
+        | LC_ALL=C sort \
+        | sed 's#^\./##' \
+        | while IFS= read -r rel; do
+            sha256sum "$rel"
+          done > BUNDLE_SHA256SUMS
+)
 
 (
     cd "$STAGE_ROOT"

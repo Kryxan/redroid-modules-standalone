@@ -37,13 +37,33 @@ jobs:
             image: registry.access.redhat.com/ubi9/ubi
             artifact_label: rhel-ubi-9
             allow_failure: true
+          - name: almalinux-8
+            image: almalinux:8
+            artifact_label: almalinux-8
+            allow_failure: false
+          - name: almalinux-9
+            image: almalinux:9
+            artifact_label: almalinux-9
+            allow_failure: false
+          - name: rockylinux-8
+            image: rockylinux:8
+            artifact_label: rockylinux-8
+            allow_failure: false
+          - name: rockylinux-9
+            image: rockylinux:9
+            artifact_label: rockylinux-9
+            allow_failure: false
+          - name: cloudlinux-8
+            image: ezamriy/cloudlinux-8
+            artifact_label: cloudlinux-8
+            allow_failure: true
 
     steps:
       - uses: actions/checkout@v4
 
       - name: Build DKMS modules
         id: dkms
-        uses: ./.github/actions/rpm-dkms-build
+        uses: ./.github/actions/rhel-dkms-build
         with:
           container-image: ${{ matrix.image }}
           distro-label: ${{ matrix.artifact_label }}

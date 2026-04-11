@@ -214,8 +214,8 @@ runs:
 
                 if ! "$PKG_MGR" -y install dkms >/dev/null 2>&1; then
                     case "$DISTRO_ID" in
-                        centos|rhel|rocky|almalinux|ol)
-                            "$PKG_MGR" -y install "dnf-command(config-manager)" || true
+                        centos|rhel|rocky|almalinux|ol|cloudlinux)
+                            "$PKG_MGR" -y install "dnf-command(config-manager)" || "$PKG_MGR" -y install dnf-plugins-core || true
                             case "${DISTRO_VERSION_ID%%.*}" in
                                 9)
                                     "$PKG_MGR" config-manager --set-enabled crb || true
@@ -230,6 +230,9 @@ runs:
                                         || true
                                     ;;
                             esac
+                            ;;
+                        openEuler|openeuler|anolis|opencloudos|alinux)
+                            "$PKG_MGR" -y install dnf-plugins-core || "$PKG_MGR" -y install "dnf-command(config-manager)" || true
                             ;;
                     esac
                 fi

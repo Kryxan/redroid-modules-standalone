@@ -1,0 +1,54 @@
+name: RHEL-family DKMS Build
+
+description: >-
+  Standardized DKMS build wrapper for RHEL-compatible distributions such as
+  RHEL, CentOS Stream, AlmaLinux, Rocky Linux, and CloudLinux. Delegates the
+  actual build/install flow to the shared RPM-family action so logging,
+  versioning, artifact staging, and DKMS behavior stay deterministic.
+
+inputs:
+  container-image:
+    description: Optional RHEL-family container image to run the build inside.
+    required: false
+    default: ""
+  distro-label:
+    description: Optional label used when staging artifacts under ./artifacts/.
+    required: false
+    default: ""
+  workdir:
+    description: Repository-relative working directory that contains VERSION, binder/, and ashmem/.
+    required: false
+    default: "."
+  package-artifacts:
+    description: Attempt DKMS RPM packaging when the backend is available.
+    required: false
+    default: "true"
+
+outputs:
+  artifacts_path:
+    description: Path to the staged module, log, and package artifacts.
+    value: ${{ steps.build.outputs.artifacts_path }}
+  kernel_version:
+    description: Kernel version selected for the DKMS build.
+    value: ${{ steps.build.outputs.kernel_version }}
+  distro_id:
+    description: Distribution ID detected from /etc/os-release.
+    value: ${{ steps.build.outputs.distro_id }}
+  skipped:
+    description: Whether the build was intentionally skipped due to a non-actionable CI environment mismatch.
+    value: ${{ steps.build.outputs.skipped }}
+  skip_reason:
+    description: Reason for a successful skip when skipped=true.
+    value: ${{ steps.build.outputs.skip_reason }}
+
+runs:
+  using: composite
+  steps:
+    - name: Build RHEL-family DKMS artifacts
+      id: build
+      uses: ./.github/actions/rpm-dkms-build
+      with:
+        container-image: ${{ inputs.container-image }}
+        distro-label: ${{ inputs.distro-label }}
+        workdir: ${{ inputs.workdir }}
+        package-artifacts: ${{ inputs.package-artifacts }}
