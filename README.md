@@ -1,5 +1,9 @@
 # Android IPC Kernel Modules
 
+## Installer is broken. the kernel modules do work on test systems. 
+
+Next update will focus on rebuilding the installer and build setup as well as more improvements to github workflows.
+
 Out-of-tree `binder_linux` and `ashmem_linux` modules for ReDroid / Waydroid style Android container hosts, with release packaging, DKMS fallback, and `ipcverify` validation.
 
 ## Supported Prebuilt Kernel Modules
